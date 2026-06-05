@@ -1,0 +1,190 @@
+import os
+import re
+import csv
+import sys
+import datetime
+from typing import List, Dict, Any
+
+# Add parent directories to sys.path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
+from app.ingestion.classifier import classify_sentences
+from app.ingestion.clusterer import cluster_sentences
+from app.ingestion.synthesizer import synthesize_page
+from app.ingestion.validation import validate_page
+
+def redact_pii(text: str) -> str:
+    """Strips out email addresses, phone numbers, and SSNs from text."""
+    if not text:
+        return ""
+    # Redact email addresses
+    text = re.sub(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', '[EMAIL]', text)
+    # Redact phone numbers
+    text = re.sub(r'\+?\d{1,4}?[-.\s]?\(?\d{1,3}?\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}', '[PHONE]', text)
+    # Redact SSNs
+    text = re.sub(r'\b\d{3}-\d{2}-\d{4}\b', '[SSN]', text)
+    return text
+
+def split_into_sentences(text: str) -> List[str]:
+    """Splits a block of text into individual sentences using punctuation boundaries."""
+    if not text:
+        return []
+    # Split by periods, question marks, or exclamation marks followed by whitespace
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    return [s.strip() for s in sentences if s.strip()]
+
+def load_and_filter_csv(csv_path: str) -> List[Dict[str, Any]]:
+    """
+    Loads raw messages from CSV and filters out joins, leaves, and short entries.
+    Also redacts PII.
+    """
+    filtered_messages = []
+    if not os.path.exists(csv_path):
+        print(f"Ingestion CSV not found: {csv_path}")
+        return []
+        
+    seen_ts = set()
+    with open(csv_path, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            ts = row.get('ts', '')
+            subtype = row.get('subtype', '')
+            text = row.get('text', '') or ''
+            
+            # Remove duplicate ts messages
+            if ts in seen_ts:
+                continue
+            seen_ts.add(ts)
+            
+            # Filter joins/leaves
+            if subtype in ['channel_join', 'channel_leave']:
+                continue
+                
+            # Filter short messages (<15 words) or empty messages
+            words = text.split()
+            if len(words) < 15:
+                continue
+                
+            # Redact PII
+            clean_text = redact_pii(text)
+            
+            channel = row.get('channel_id', '') or 'unknown_channel'
+            user = row.get('user', '') or 'unknown_user'
+            
+            filtered_messages.append({
+                "text": clean_text,
+                "user": user,
+                "channel": channel,
+                "timestamp": row.get('latest_reply', '') or datetime.datetime.utcfromtimestamp(float(ts)).isoformat() + "Z" if ts else "",
+                "source_id": f"slack://{channel}/{ts}"
+            })
+            
+    return filtered_messages
+
+def run_ingestion_pipeline(csv_path: str, max_messages: int = 200) -> List[Dict[str, Any]]:
+    """
+    Runs the complete Phase 1 ingestion pipeline.
+    max_messages limits execution size to conserve tokens on Azure during testing.
+    Returns a list of synthesized page dicts:
+    [
+        {"page_id": "page_001", "content": "...", "metadata": {...}, "validation": {...}},
+        ...
+    ]
+    """
+    print("Step 1: Loading and filtering Slack CSV messages...")
+    messages = load_and_filter_csv(csv_path)
+    if not messages:
+        print("No messages to ingest.")
+        return []
+        
+    # Limit message count for safety
+    messages = messages[:max_messages]
+    print(f"Loaded {len(messages)} messages for ingestion.")
+    
+    # Step 2: Split into sentences and map back to metadata
+    print("Step 2: Splitting messages into sentences...")
+    sentence_records = []
+    for msg in messages:
+        sentences = split_into_sentences(msg["text"])
+        for s in sentences:
+            sentence_records.append({
+                "text": s,
+                "metadata": {
+                    "user": msg["user"],
+                    "channel": msg["channel"],
+                    "timestamp": msg["timestamp"],
+                    "source_id": msg["source_id"]
+                }
+            })
+    print(f"Generated {len(sentence_records)} sentences.")
+    
+    # Step 3: Sentence Classification
+    print("Step 3: Classifying sentences into speech acts (CONDITION, PRESCRIPTION, etc.)...")
+    # Batch classification in groups of 25 to reduce API round trips
+    batch_size = 25
+    sentence_texts = [r["text"] for r in sentence_records]
+    classified_types = []
+    
+    for i in range(0, len(sentence_texts), batch_size):
+        batch = sentence_texts[i:i+batch_size]
+        print(f"  Classifying batch {i//batch_size + 1}/{-(-len(sentence_texts)//batch_size)}")
+        classified_types.extend(classify_sentences(batch))
+        
+    for r, t in zip(sentence_records, classified_types):
+        r["type"] = t
+        
+    # Step 4: Semantic Clustering
+    print("Step 4: Performing local semantic clustering into decision units...")
+    clusters = cluster_sentences(sentence_records, similarity_threshold=0.68)
+    print(f"Grouped sentences into {len(clusters)} clusters.")
+    
+    # Step 5 & 6: Synthesis and Validation loop
+    synthesized_pages = []
+    print("Step 5 & 6: Synthesizing and validating pages...")
+    for idx, cluster in enumerate(clusters):
+        page_index = idx + 1
+        print(f"  Processing Cluster {page_index}/{len(clusters)} ({len(cluster)} sentences)...")
+        
+        sources_list = [item["text"] for item in cluster]
+        
+        # Synthesis loop with up to 2 re-synthesis attempts on validation failure
+        attempts = 0
+        max_attempts = 3
+        validation_passed = False
+        page_content = ""
+        validation_result = {}
+        
+        while attempts < max_attempts and not validation_passed:
+            attempts += 1
+            print(f"    Synthesis attempt {attempts}/{max_attempts}...")
+            page_content = synthesize_page(page_index, cluster)
+            
+            print("    Validating synthesized page...")
+            validation_result = validate_page(sources_list, page_content)
+            validation_passed = validation_result.get("validation_passed", False)
+            
+            if not validation_passed:
+                print(f"    Validation failed. Reason: {validation_result.get('reason', 'Unknown')}")
+                
+        status = "APPROVED" if validation_passed else "DRAFT"
+        print(f"    Page {page_index:03d} finalized with status: {status}")
+        
+        # Parse YAML header metadata manually or store as is
+        synthesized_pages.append({
+            "page_id": f"page_{page_index:03d}",
+            "content": page_content,
+            "status": status,
+            "validation": validation_result,
+            "sources": sources_list
+        })
+        
+    return synthesized_pages
+
+if __name__ == '__main__':
+    # Local dry run path
+    csv_path = r"C:\Users\dell\.gemini\antigravity\brain\99a9c7c3-962c-4b53-b42e-876755f250f8\scratch\messages.csv"
+    try:
+        pages = run_ingestion_pipeline(csv_path, max_messages=5)
+        print(f"Ingested {len(pages)} pages successfully.")
+    except Exception as e:
+        print("Dry run error:", e)

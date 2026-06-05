@@ -1,0 +1,202 @@
+[
+  {
+    "question": "Who started the Superset project and when?",
+    "answer": "Max (user U7HPM7JHL) started the Superset project in 2015 while working at Airbnb."
+  },
+  {
+    "question": "What gunicorn command is used to run the superset application with gevent workers and statsd configuration?",
+    "answer": "gunicorn -w 10 -k gevent --timeout 120 -b 0.0.0.0:6666 --limit-request-line 0 --limit-request-field_size 0 --statsd-host localhost:8125 \"superset.app:create_app()\""
+  },
+  {
+    "question": "How can a user hide the chart title for a filterbox using CSS?",
+    "answer": "By applying the CSS: .filter_box .slice-header { display:none !important; } (though some users reported this does not work directly depending on the version)."
+  },
+  {
+    "question": "What error is raised when building ListView/Filters.tsx in the Superset frontend?",
+    "answer": "TS2322: Type '(selected: SelectOption | null) => void' is not assignable to type '(value: ValueType<GroupType<GroupType<never>>>, action: ActionMeta<GroupType<GroupType<never>>>) => void'."
+  },
+  {
+    "question": "What is the issue with Flask session cookies on logout?",
+    "answer": "When a user logs out, the session ID is renewed on the browser, but the previous session ID is not invalidated on the server and can still be used to make calls."
+  },
+  {
+    "question": "Who is Erik and what is his role?",
+    "answer": "Erik is a full stack engineer at Airbnb and a PMC member for Superset who also builds other analytics tools in his role."
+  },
+  {
+    "question": "Who is Eugenia and what is her background?",
+    "answer": "Eugenia leads the Customer Engagement team at Preset. Before joining, she worked for 10 years at Vertica (an analytics database) and has experience in data warehousing, query tuning, and writing complex queries."
+  },
+  {
+    "question": "Who is Brandon and where is he from?",
+    "answer": "Brandon (user U01439D0AN9) is a developer from Texas, currently living in Córdoba, Argentina, who previously worked as a journalist."
+  },
+  {
+    "question": "What is the custom plugin endpoint payload error reported for the Birthnames datasource?",
+    "answer": "Rakesh Gupta reported a 500 internal server error when requesting /api/v1/chart/data using a newly created template plugin with the Birthnames datasource."
+  },
+  {
+    "question": "What is SIP-45?",
+    "answer": "SIP-45 is a Superset Improvement Proposal discussed during community meetings."
+  },
+  {
+    "question": "Who is Evan and what does he do?",
+    "answer": "Evan is a frontend engineer and designer at Preset and a committer on Superset who works on making visualization building easier and more flexible."
+  },
+  {
+    "question": "What custom viz plugin reactions count was received for the first plugin launch?",
+    "answer": "The first custom viz plugin announcement received 5 sunglasses reactions, 4 heart_eyes reactions, 4 +1 reactions, and 3 fire reactions."
+  },
+  {
+    "question": "Who is Negi and what is his role?",
+    "answer": "Negi is a Data Engineer at PayTM India who has been working on Superset for 2 years, using Superset and Druid to power real-time mobile and web analytics."
+  },
+  {
+    "question": "What is the pull request number for table chart cross-filtering?",
+    "answer": "Pull request #9593."
+  },
+  {
+    "question": "What is the pull request number for fixing Slack integration in superset?",
+    "answer": "Pull request #10345."
+  },
+  {
+    "question": "Who is Gabe Fett and what does he lead?",
+    "answer": "Gabe Fett (user UT9LSQFLL, also known as Boba) leads talent at Preset."
+  },
+  {
+    "question": "Who is Aaron and what is his role?",
+    "answer": "Aaron is a fullstack engineer at Preset who has been working on enhancements to the viz plugin architecture and Preset's Superset-as-a-service offering."
+  },
+  {
+    "question": "What is the link for the Google BigQuery blog post on Preset?",
+    "answer": "https://preset.io/blog/2020-08-04-google-bigquery/"
+  },
+  {
+    "question": "Who is Sunny and what is he exploring?",
+    "answer": "Sunny (user U019ZMWK02D) is exploring Superset to use as a frontend for his organization, primarily using Hive and studying data security in Superset."
+  },
+  {
+    "question": "What is the issue with Row Level Security (RLS) and 10k managers?",
+    "answer": "Setting up RLS clauses manually (e.g., manager_id = 1) for 10k managers requires doing it 10,000 times. The user wants a dynamic function like manager_id = get_manager_id() that captures the logged-in username."
+  },
+  {
+    "question": "Who is Syazwan and what is his background?",
+    "answer": "Syazwan is a software engineer living in Malaysia who uses Superset to do data visualization for his team."
+  },
+  {
+    "question": "What is the pull request number for the issue mentioned by user U0199CND1K7?",
+    "answer": "Pull request #9321."
+  },
+  {
+    "question": "What is the link for merging db migrations in Contributing.md?",
+    "answer": "https://github.com/apache/incubator-superset/blob/master/CONTRIBUTING.md#merging-db-migrations"
+  },
+  {
+    "question": "How did user U010H79VBJ6 lose their charts in Superset?",
+    "answer": "They lost their Docker container due to some issues, resulting in the loss of all charts inside it."
+  },
+  {
+    "question": "What is the gunicorn timeout configuration in the example gunicorn command?",
+    "answer": "--timeout 120"
+  },
+  {
+    "question": "What is the gunicorn port configuration in the example command?",
+    "answer": "-b 0.0.0.0:6666"
+  },
+  {
+    "question": "Which chart type from ECharts is recommended by user UH0UPCJVD for 3D charts?",
+    "answer": "ECharts 3D surface chart (available at https://echarts.apache.org/examples/en/index.html#chart-type-surface)."
+  },
+  {
+    "question": "Who is Ryan and which project is he invited to join?",
+    "answer": "Ryan (user U019D20J9KK) was invited to join the filter redesign project by user U017193F7JQ."
+  },
+  {
+    "question": "What did Preset and Airbnb meet to discuss regarding the filter status indicator?",
+    "answer": "They met to settle on a design solution for the filter status indicator (phase 0) and plan the kickoff for phase 1 and cross-filtering design."
+  },
+  {
+    "question": "Which database is Sunny using to create dashboards?",
+    "answer": "Hive."
+  },
+  {
+    "question": "Who set the channel topic to :mortar_board: in the channel C0181SFML11?",
+    "answer": "User UHK31ESN4."
+  },
+  {
+    "question": "What is the statsd-host value in the gunicorn configuration example?",
+    "answer": "localhost:8125"
+  },
+  {
+    "question": "What did user U016M4223HA ask help for regarding currency formatting?",
+    "answer": "Showing amount in Indian Currency like 21M = 21 Crores."
+  },
+  {
+    "question": "What is the issue with ListView/Filters.tsx TS2322?",
+    "answer": "The type '(selected: SelectOption | null) => void' is not assignable to type '(value: ValueType<GroupType<GroupType<never>>>, action: ActionMeta<GroupType<GroupType<never>>>) => void'."
+  },
+  {
+    "question": "What did Rakesh Gupta experience when trying to load Birthnames data in his helloworld plugin?",
+    "answer": "He received a 500 internal server error."
+  },
+  {
+    "question": "What is the dynamic filtering problem with 3 managers?",
+    "answer": "The managers have userIDs manager-1, manager-2, and manager-3. When manager-1 logs in, they should see only rows where manager_id=1. The user is seeking a dynamic solution instead of manual RLS clauses."
+  },
+  {
+    "question": "What is the URL for the properly configured WSGI HTTP server page in the Superset docs?",
+    "answer": "https://superset.incubator.apache.org/installation.html#a-proper-wsgi-http-server"
+  },
+  {
+    "question": "What is the issue with session cookie invalidation on logout for Google OAuth?",
+    "answer": "The session cookie changes on the browser after logout, but the old session ID is not invalidated on the server, allowing it to still be used for calls."
+  },
+  {
+    "question": "Who is Hossein and what is his company?",
+    "answer": "Hossein is a data engineer from Tehran, Iran working at Alopeyk company (On-Demand motorbike ride)."
+  },
+  {
+    "question": "What is the issue with label color configuration across a Superset instance?",
+    "answer": "User U01597CKQHF wanted to enforce a label color across multiple dashboards globally rather than editing metadata individually for each dashboard."
+  },
+  {
+    "question": "What did Aaron work on at Preset?",
+    "answer": "Aaron worked on enhancements to the viz plugin architecture and Preset's Superset-as-a-service offering."
+  },
+  {
+    "question": "Which pull request did user UM4AW481K want to merge to fix Slack integration?",
+    "answer": "Pull request #10345."
+  },
+  {
+    "question": "Who is Gabe Fett and what does he lead?",
+    "answer": "Gabe Fett (or Boba) leads talent at Preset."
+  },
+  {
+    "question": "Who is Brandon and what is his location?",
+    "answer": "Brandon (user U01439D0AN9) is from Texas and lives in Córdoba, Argentina."
+  },
+  {
+    "question": "How many years of experience does Negi have working on Superset?",
+    "answer": "2 years."
+  },
+  {
+    "question": "What are the two custom features Negi and his team built in Superset?",
+    "answer": "Cohort analysis and Funnel."
+  },
+  {
+    "question": "What is the name of the blog post by Evan regarding BigQuery?",
+    "answer": "Connecting Superset to BigQuery."
+  },
+  {
+    "question": "Who did user U017193F7JQ ask if they are interested in the filter redesign project?",
+    "answer": "Ryan (user U019D20J9KK)."
+  },
+  {
+    "question": "What is the ECharts viz plugin project status mentioned by user UH0UPCJVD?",
+    "answer": "They are in the final steps of introducing the first ECharts-based charts into Superset."
+  },
+  {
+    "question": "Who is Adam and what is his background?",
+    "answer": "Adam is an analyst at a San Francisco-based startup who has worked with Superset for a year."
+  }
+]
