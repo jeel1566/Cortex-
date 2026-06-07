@@ -1,0 +1,252 @@
+[
+  {
+    "question": "Who started the Superset project and when?",
+    "gold_answer": "Max (user U7HPM7JHL) started the Superset project in 2015 while working at Airbnb.",
+    "rag_answer": "The Superset project was started by **Majorie Montano** while she was at **Airbnb in 2015**. This information is cited from her message in the Slack channel **C015WAR4SDV** on **2020-07-02 17:29:33** (Document [ID: 28])."
+  },
+  {
+    "question": "What gunicorn command is used to run the superset application with gevent workers and statsd configuration?",
+    "gold_answer": "gunicorn -w 10 -k gevent --timeout 120 -b 0.0.0.0:6666 --limit-request-line 0 --limit-request-field_size 0 --statsd-host localhost:8125 \"superset.app:create_app()\"",
+    "rag_answer": "The Gunicorn command used to run the Superset application with gevent workers and statsd configuration is:  \n`/opt/superset/vsuperset/bin/gunicorn -w 10 -k gevent --timeout 120 -b 0.0.0.0:8000 --limit-request-line 0 --limit-request-field_size 0 --statsd-host localhost:8125 superset:app --error-logfile /opt/superset/logs/superset.error.log --log-file /opt/superset/logs/superset.log`  \n\nThis command is cited from **Document [ID: 680]** in channel **C0170U650CQ** (timestamp: 2020-09-18 11:58:30). It includes the `--statsd-host` parameter for statsd configuration and the `-k gevent` flag to specify gevent workers."
+  },
+  {
+    "question": "How can a user hide the chart title for a filterbox using CSS?",
+    "gold_answer": "By applying the CSS: .filter_box .slice-header { display:none !important; } (though some users reported this does not work directly depending on the version).",
+    "rag_answer": "To hide the chart title for a filterbox using CSS, you can try targeting the specific chart or filterbox element with its unique ID, as demonstrated in similar contexts. For example, if the filterbox has a specific ID (e.g., `#filterbox-id`), you could use a selector like:\n\n```css\n#filterbox-id .chart-header {\n  display: none !important;\n}\n```\n\nThis approach mirrors the method used to hide chart headers by targeting an element's ID (as seen in Document [ID: 392](https://example.com/channel/C016B3LG5B4/2020-09-02-14:35:48)), which ensures the CSS rule applies only to the intended component. \n\nIf the above does not work, inspect the filterbox's HTML to identify the exact class or ID associated with the title and adjust the selector accordingly. The initial attempt in [Document 14](https://example.com/channel/C016B3LG5B4/2020-08-09-19:17:42) (` .filter_box .slice-header`) may have failed due to incorrect class names or specificity issues."
+  },
+  {
+    "question": "What error is raised when building ListView/Filters.tsx in the Superset frontend?",
+    "gold_answer": "TS2322: Type '(selected: SelectOption | null) => void' is not assignable to type '(value: ValueType<GroupType<GroupType<never>>>, action: ActionMeta<GroupType<GroupType<never>>>) => void'.",
+    "rag_answer": "The error raised when building `ListView/Filters.tsx` in the Superset frontend is a TypeScript error (TS2322) related to a type mismatch. Specifically, the type `(selected: SelectOption | null) => void` is not assignable to `(value: ValueType<GroupType<GroupType<never>>>, action: ActionMeta<GroupType<GroupType<never>>>) => void` due to incompatible parameter types. The error occurs at line 149, column 11 in the file `Filters.tsx` and involves an `undefined` value being incorrectly assigned to a type expecting `SelectOption | null`.\n\n**Source**: Melvin Mcglothin [2020-07-17 12:58:35] in channel C015WAZL0KH."
+  },
+  {
+    "question": "What is the issue with Flask session cookies on logout?",
+    "gold_answer": "When a user logs out, the session ID is renewed on the browser, but the previous session ID is not invalidated on the server and can still be used to make calls.",
+    "rag_answer": "The issue with Flask session cookies on logout is that **the old session ID remains valid even after a user logs out**, despite the session being renewed. This occurs because Flask does not automatically invalidate the previous session cookie when a new one is generated during logout. As a result, the old session ID could still be used to make requests, posing a potential security risk.\n\nThis problem was raised in the following contexts:  \n- **Document [ID: 21]**: Velvet Vinyard asked if there is a way to invalidate the previous session after logout, noting that the old session ID can still be used.  \n- **Document [ID: 36]**: The same user confirmed the issue persists with Google OAuth, where the old session (cookie) is not invalidated upon logout.  \n\nTo address this, developers must explicitly invalidate the old session (e.g., by calling `session.clear()` or using a token-based session management system) and ensure secure cookie attributes like `SESSION_COOKIE_SAMESITE` and `SESSION_COOKIE_HTTPONLY` are configured appropriately."
+  },
+  {
+    "question": "Who is Erik and what is his role?",
+    "gold_answer": "Erik is a full stack engineer at Airbnb and a PMC member for Superset who also builds other analytics tools in his role.",
+    "rag_answer": "Erik is a full stack engineer at Airbnb and a PMC (Project Management Committee) member for Superset. He has been contributing to Superset for over a year and also develops other analytics tools in his role at Airbnb. He offers assistance with code reviews or PR comments, particularly for newcomers to the developer community.  \n\n**Source**: Message from Matha Migliore in channel C015WAR4SDV, timestamp 2020-07-02 17:00:19."
+  },
+  {
+    "question": "Who is Eugenia and what is her background?",
+    "gold_answer": "Eugenia leads the Customer Engagement team at Preset. Before joining, she worked for 10 years at Vertica (an analytics database) and has experience in data warehousing, query tuning, and writing complex queries.",
+    "rag_answer": "Eugenia is a professional who works at **Preset**, where she leads the **Customer Engagement team**. She has extensive experience in data-related fields, having spent **10 years at Vertica**, an analytics database company, where she worked on **data warehouse architecture, query tuning, complex queries, and data pipeline development**. She is knowledgeable in **Superset** (as Preset is a hosted version of Superset) and offers assistance with tasks like creating charts, dashboards, and troubleshooting usage-related issues. However, she clarifies that Preset handles installation and configuration, so she does not focus on those aspects. \n\nThis information is sourced from **Evelia Erdman** (likely a display name for Eugenia) in **Document [ID: 27]**, posted on **2020-07-02 17:33:06** in channel **C015WAR4SDV**."
+  },
+  {
+    "question": "Who is Brandon and where is he from?",
+    "gold_answer": "Brandon (user U01439D0AN9) is a developer from Texas, currently living in C\u00f3rdoba, Argentina, who previously worked as a journalist.",
+    "rag_answer": "Brandon, whose friends call him \"Bub\" or \"Bubba,\" is from Texas. He currently lives in C\u00f3rdoba, Argentina, where he works as a Python developer. He previously worked as a journalist and enjoys writing for both humans and machines. This information is provided by Sharan Stack in the channel C015WAR4SDV on 2020-07-02 at 17:53:12."
+  },
+  {
+    "question": "What is the custom plugin endpoint payload error reported for the Birthnames datasource?",
+    "gold_answer": "Rakesh Gupta reported a 500 internal server error when requesting /api/v1/chart/data using a newly created template plugin with the Birthnames datasource.",
+    "rag_answer": "The custom plugin endpoint payload for the Birthnames datasource does not explicitly show a syntax or structural error in the provided JSON. However, the user reports a **500 Internal Server Error** when attempting to retrieve data, indicating a server-side issue rather than a malformed payload. The payload includes valid fields such as `datasource.id`, `queries`, and `result_format`, but the error may stem from backend processing failures, incorrect datasource configuration (e.g., invalid ID or permissions), or issues with the plugin's integration. No specific payload errors are detailed in the context. \n\n**Source**: Allison Aburto's message in channel C0170U650CQ (2020-08-05 12:00:10) and C7G8CG0LR (2020-08-05 11:53:52)."
+  },
+  {
+    "question": "What is SIP-45?",
+    "gold_answer": "SIP-45 is a Superset Improvement Proposal discussed during community meetings.",
+    "rag_answer": "SIP-45 refers to a **Superset Improvement Proposal** discussed in the context of addressing UX and technical challenges related to filter scopes in Apache Superset dashboards. Specifically, the meeting with AirBnB highlighted issues such as:  \n- Alerts for dashboard consumers when filters are misapplied, leading to untrustworthy data.  \n- Notifications for dashboard creators to identify incompatible charts and adjust filter scopes.  \n- Performance concerns with validating filter eligibility upfront (SIP-45 Option #1).  \n\nThe discussion also included action items, such as the Preset design team proposing an alternative design and AirBnB investigating performance impacts of filter validation. However, the exact technical details of SIP-45 itself are not explicitly outlined in the provided context.  \n\n**Source**: Tawanda Thomasson\u2019s message in channel C0188FT3V2S (2020-08-11 23:17:15)."
+  },
+  {
+    "question": "Who is Evan and what does he do?",
+    "gold_answer": "Evan is a frontend engineer and designer at Preset and a committer on Superset who works on making visualization building easier and more flexible.",
+    "rag_answer": "Evan is a frontend engineer and designer at Preset, as mentioned in a Slack message from Rebbecca Rote (2020-07-02 18:10:37) in channel C015WAR4SDV. He works on improving the experience and tooling for building data visualizations in Superset, aiming to make it more flexible and enhance its look and feel. Additionally, he is a committer on the Superset project and offers assistance when needed. \n\nSource: Rebbecca Rote, C015WAR4SDV, 2020-07-02 18:10:37."
+  },
+  {
+    "question": "What custom viz plugin reactions count was received for the first plugin launch?",
+    "gold_answer": "The first custom viz plugin announcement received 5 sunglasses reactions, 4 heart_eyes reactions, 4 +1 reactions, and 3 fire reactions.",
+    "rag_answer": "The information provided in the context does not mention anything about a \"custom viz plugin reactions count\" or any metrics related to plugin launches. The Slack threads discuss technical challenges with adding custom visualizations to Superset but do not include data on reactions, counts, or successful plugin launches. \n\n**Answer:** The context does not contain information about a \"custom viz plugin reactions count\" for any plugin launch."
+  },
+  {
+    "question": "Who is Negi and what is his role?",
+    "gold_answer": "Negi is a Data Engineer at PayTM India who has been working on Superset for 2 years, using Superset and Druid to power real-time mobile and web analytics.",
+    "rag_answer": "Negi is a **Data Engineer at PayTM India**, as stated in a Slack message from July 28, 2020 (Document [ID: 15]). He has been working on **Apache Superset** for two years, using it alongside **Druid** to power real-time mobile and web analytics. Additionally, he has contributed to Superset by building features such as **Cohort analysis** and **Funnel**. \n\nSource: Deane Dobson [2020-07-28 06:46:44], Channel: C015WAR4SDV."
+  },
+  {
+    "question": "What is the pull request number for table chart cross-filtering?",
+    "gold_answer": "Pull request #9593.",
+    "rag_answer": "The pull request number for table chart cross-filtering is **9593**, as mentioned in the message from Shanel Spitz in channel **C0188FT3V2S** on **2020-08-07 19:26:18**. The link provided in the context points to the GitHub PR: [https://github.com/apache/incubator-superset/pull/9593](https://github.com/apache/incubator-superset/pull/9593). \n\nSource: Document [ID: 33], timestamp 2020-08-07 19:26:18."
+  },
+  {
+    "question": "What is the pull request number for fixing Slack integration in superset?",
+    "gold_answer": "Pull request #10345.",
+    "rag_answer": "The pull request number for fixing the Slack integration in Superset is not explicitly provided in the context. The message references a placeholder `[PHONE]` in the URL, which likely obscures the actual pull request number. Therefore, the specific PR number cannot be determined from the given information. \n\nSource: Zachariah Zemlicka [2020-07-16 19:50:42], Channel CH307T4JG."
+  },
+  {
+    "question": "Who is Gabe Fett and what does he lead?",
+    "gold_answer": "Gabe Fett (user UT9LSQFLL, also known as Boba) leads talent at Preset.",
+    "rag_answer": "Gabe Fett, also known as Boba, leads talent at Preset. He introduced himself in a message on July 2, 2020, in the channel C015WAR4SDV, emphasizing his role in supporting the community through talent engagement and his enthusiasm for Superset's growth. \n\n**Source**: Cordia Cook [2020-07-02 17:34:32], Channel: C015WAR4SDV."
+  },
+  {
+    "question": "Who is Aaron and what is his role?",
+    "gold_answer": "Aaron is a fullstack engineer at Preset who has been working on enhancements to the viz plugin architecture and Preset's Superset-as-a-service offering.",
+    "rag_answer": "The information provided in the context does not specify Aaron's role or position within the company. The message only mentions Omer Ostler requesting Aaron to \"add split up or major components for the dash filter project,\" but no further details about Aaron's responsibilities or title are included. \n\nSource: Omer Ostler [2020-09-15 16:15:39], Channel: C0188FT3V2S."
+  },
+  {
+    "question": "What is the link for the Google BigQuery blog post on Preset?",
+    "gold_answer": "https://preset.io/blog/2020-08-04-google-bigquery/",
+    "rag_answer": "The link for the Google BigQuery blog post on Preset is [https://preset.io/blog/[PHONE]-google-bigquery/](https://preset.io/blog/[PHONE]-google-bigquery/). This was shared by Darius Discher in both **Document [ID: 32]** (channel C7G8CG0LR, 2020-08-03 19:45:35) and **Document [ID: 460]** (channel C014QMBQEU8, 2020-08-03 19:43:14). Note that \"[PHONE]\" appears to be a placeholder or redacted segment in the URL."
+  },
+  {
+    "question": "Who is Sunny and what is he exploring?",
+    "gold_answer": "Sunny (user U019ZMWK02D) is exploring Superset to use as a frontend for his organization, primarily using Hive and studying data security in Superset.",
+    "rag_answer": "Sunny is Chi Carini, as mentioned in the Slack message thread from Channel C015WAR4SDV on 2020-08-27. He is exploring **Apache Superset** as a front-end tool for the organization, primarily using **Hive** to create dashboards and investigating **data security** aspects within Superset (Document [ID: 41])."
+  },
+  {
+    "question": "What is the issue with Row Level Security (RLS) and 10k managers?",
+    "gold_answer": "Setting up RLS clauses manually (e.g., manager_id = 1) for 10k managers requires doing it 10,000 times. The user wants a dynamic function like manager_id = get_manager_id() that captures the logged-in username.",
+    "rag_answer": "The issue with Row Level Security (RLS) and 10k managers is that manually configuring individual RLS rules for each manager (e.g., setting `manager_id = 1`, `manager_id = 2`, etc.) becomes **unscalable and impractical** when dealing with a large number of managers. As noted in the context, this approach would require creating **10,000 separate RLS configurations**, which is inefficient and error-prone. \n\nThe user proposes a dynamic solution using a function like `manager_id = get_manager_id()` to automatically retrieve the current user's manager ID, enabling a single, scalable RLS rule that adapts to the logged-in user. This would eliminate the need for manual, static configurations for each manager.\n\n**Source**: Tequila Toombs' message in channel `C016B3LG5B4` (2020-07-17 10:26:05)."
+  },
+  {
+    "question": "Who is Syazwan and what is his background?",
+    "gold_answer": "Syazwan is a software engineer living in Malaysia who uses Superset to do data visualization for his team.",
+    "rag_answer": "Syazwan is a software engineer based in Malaysia who uses Apache Superset for data visualization in his team's work. This information is provided in a Slack message from Cleo Copenhaver in channel C015WAR4SDV on 2020-07-03 at 02:16:00, where Syazwan introduces himself."
+  },
+  {
+    "question": "What is the pull request number for the issue mentioned by user U0199CND1K7?",
+    "gold_answer": "Pull request #9321.",
+    "rag_answer": "The information provided in the context does not mention the user U0199CND1K7 or any pull request number associated with them. The documents reference other users (Yuri Yerby, Zachariah Zemlicka, Noelle Nagao) and their interactions, but none link to the user in question. Therefore, the pull request number cannot be determined from the given context."
+  },
+  {
+    "question": "What is the link for merging db migrations in Contributing.md?",
+    "gold_answer": "https://github.com/apache/incubator-superset/blob/master/CONTRIBUTING.md#merging-db-migrations",
+    "rag_answer": "The information provided in the context does not mention or reference a link for merging database migrations in Contributing.md. None of the Slack threads discuss Contributing.md or provide guidance on merging migrations via documentation links. For precise details, you would need to consult the actual Contributing.md file or additional resources not included here."
+  },
+  {
+    "question": "How did user U010H79VBJ6 lose their charts in Superset?",
+    "gold_answer": "They lost their Docker container due to some issues, resulting in the loss of all charts inside it.",
+    "rag_answer": "The user U010H79VBJ6 likely lost their charts in Superset due to improper persistence configuration when running Superset in a containerized environment (e.g., Docker). Specifically:  \n\n1. **Database Persistence**: If Superset was configured to use MySQL or another database without persistent storage (e.g., Docker volumes or external database hosting), charts and dashboards stored in the database could be lost when the container is stopped, restarted, or modified. This is highlighted in [Document 386](#document-386), where Lucretia Lanser asks whether MySQL stores charts and how to avoid losing them when containers die.  \n\n2. **Docker Configuration**: Modifying the `docker-compose` script without ensuring data persistence (e.g., by not mounting volumes for the database or Superset metadata) could result in data loss. This is directly relevant to [Document 868](#document-868), where Ming Myatt asks if changing the Docker setup would erase dashboards.  \n\n3. **Default Behavior**: By default, Docker containers do not persist data across restarts unless explicitly configured with volumes. If the user did not set up persistent storage for Superset\u2019s metadata or the underlying database, charts would be lost upon container termination.  \n\n**Source**: The context implies this issue is tied to container persistence configurations, as discussed in [Document 386](#document-386) and [Document 868](#document-868). No explicit mention of user U010H79VBJ6\u2019s actions is present, but the general scenario aligns with these Slack threads."
+  },
+  {
+    "question": "What is the gunicorn timeout configuration in the example gunicorn command?",
+    "gold_answer": "--timeout 120",
+    "rag_answer": "The gunicorn timeout configuration in the example commands is set to **120 seconds**, as specified by the `--timeout 120` parameter. This value appears consistently across multiple examples in the provided context:\n\n- Document [ID: 680](#document-680): `--timeout 120`  \n- Document [ID: 683](#document-683): `--timeout 120`  \n- Document [ID: 23](#document-23): `--timeout 120`  \n\nThis configuration is part of the Gunicorn command used to launch the Superset application."
+  },
+  {
+    "question": "What is the gunicorn port configuration in the example command?",
+    "gold_answer": "-b 0.0.0.0:6666",
+    "rag_answer": "The gunicorn port configuration in the example command is set to **8000**, as specified by the `-b 0.0.0.0:8000` parameter in the command from Saundra Stumbo's message (Channel: C0170U650CQ, 2020-09-18 11:58:30). This directs Gunicorn to bind to all interfaces on port 8000. \n\nSource: Saundra Stumbo, [2020-09-18 11:58:30](https://example.com/channel/C0170U650CQ), Channel: C0170U650CQ."
+  },
+  {
+    "question": "Which chart type from ECharts is recommended by user UH0UPCJVD for 3D charts?",
+    "gold_answer": "ECharts 3D surface chart (available at https://echarts.apache.org/examples/en/index.html#chart-type-surface).",
+    "rag_answer": "The information provided in the context does not mention a user with the ID \"UH0UPCJVD\" or their specific recommendations for 3D charts. However, Ariana Atnip (in Document [ID: 46]) highlights that ECharts includes 3D charts, such as the **surface chart** example, and offers to assist with implementing one. If the question refers to Ariana Atnip's recommendation, the surface chart is mentioned as an example. \n\nSince the user ID \"UH0UPCJVD\" is not explicitly referenced in the context, there is no direct recommendation from that user. \n\nSource: Ariana Atnip's message in Document [ID: 46] (Channel: C016B3LG5B4, 2020-08-25 09:08:21)."
+  },
+  {
+    "question": "Who is Ryan and which project is he invited to join?",
+    "gold_answer": "Ryan (user U019D20J9KK) was invited to join the filter redesign project by user U017193F7JQ.",
+    "rag_answer": "Ryan is Sixta Soule, as introduced in Document [ID: 209] from channel C015WAR4SDV. He was invited to join the **filter redesign project**, as mentioned in Document [ID: 38] from channel C0188FT3V2S, where Markita Miah directly asks him about participating in this initiative."
+  },
+  {
+    "question": "What did Preset and Airbnb meet to discuss regarding the filter status indicator?",
+    "gold_answer": "They met to settle on a design solution for the filter status indicator (phase 0) and plan the kickoff for phase 1 and cross-filtering design.",
+    "rag_answer": "Preset and Airbnb met to discuss settling on a design solution for the **filter status indicator (Phase 0)**. The implementation of this design was planned to begin \"this week\" (as of 2020-08-19), with a follow-up meeting scheduled for \"later next week\" to kick off **Phase 1** and discuss **cross-filtering design**. \n\nThis information is sourced from Markita Miah's message in channel **C0188FT3V2S** at **2020-08-19 04:13:43** (Document ID: 47)."
+  },
+  {
+    "question": "Which database is Sunny using to create dashboards?",
+    "gold_answer": "Hive.",
+    "rag_answer": "Sunny is using **Hive** to create dashboards. This is explicitly mentioned in the message from Chi Carini in channel `C015WAR4SDV` at timestamp `2020-08-27 14:11:34`, where they state:  \n*\"mostly using Hive to create dashboard and able to explore lot of things in terms of data security in Superset.\"*  \n\nNo other database is referenced in this context for Sunny's work."
+  },
+  {
+    "question": "Who set the channel topic to :mortar_board: in the channel C0181SFML11?",
+    "gold_answer": "User UHK31ESN4.",
+    "rag_answer": "The information provided in the context does not mention anyone setting the channel topic to :mortar_board: in channel C0181SFML11. The only reference to a channel purpose was set by **Rebbecca Rote** on 2020-07-31, but it was text-based (\"Paving the path to Superset graduation\") and not associated with an emoji. No other details about the topic being set to :mortar_board: are present in the documents."
+  },
+  {
+    "question": "What is the statsd-host value in the gunicorn configuration example?",
+    "gold_answer": "localhost:8125",
+    "rag_answer": "The `statsd-host` value in the Gunicorn configuration examples is set to `localhost:8125`. This is explicitly mentioned in multiple contexts:\n\n1. **Document [ID: 680]**: The command includes `--statsd-host localhost:8125` (Saundra Stumbo, 2020-09-18 11:58:30, Channel C0170U650CQ).  \n2. **Document [ID: 683]**: The same value `--statsd-host localhost:8125` appears in the updated script (Saundra Stumbo, 2020-09-18 12:08:31, Channel C0170U650CQ).  \n3. **Document [ID: 23]**: The configuration snippet also specifies `--statsd-host localhost:8125` (Etsuko Eppler, 2020-08-07 07:23:34, Channel C7G8CG0LR).  \n\nAll sources consistently confirm the `statsd-host` value as `localhost:8125`."
+  },
+  {
+    "question": "What did user U016M4223HA ask help for regarding currency formatting?",
+    "gold_answer": "Showing amount in Indian Currency like 21M = 21 Crores.",
+    "rag_answer": "The information provided in the context does not mention a user with the ID **U016M4223HA** or any query specifically attributed to this user. The currency formatting-related questions in the context were raised by **Senaida Sallis** (Document [ID: 315]) and **Ardella Armenta** (Document [ID: 11]). If you have additional context or documents involving U016M4223HA, please provide them for further clarification."
+  },
+  {
+    "question": "What is the issue with ListView/Filters.tsx TS2322?",
+    "gold_answer": "The type '(selected: SelectOption | null) => void' is not assignable to type '(value: ValueType<GroupType<GroupType<never>>>, action: ActionMeta<GroupType<GroupType<never>>>) => void'.",
+    "rag_answer": "The issue in `ListView/Filters.tsx` related to the **TS2322** error stems from a **type mismatch** between function parameters. Specifically, a function expecting a parameter of type `(selected: SelectOption | null) => void` is being assigned to a context that requires `(value: ValueType<GroupType<GroupType<never>>>, action: ActionMeta<GroupType<GroupType<never>>>) => void`. \n\nThe core problem is that the `value` parameter in the target type involves nested `GroupType` and `ValueType` generics, which are incompatible with the simpler `SelectOption | null` type used in the source function. This incompatibility causes TypeScript to reject the assignment, as the parameter types do not align.\n\n**Source**: Document [ID: 24], Channel `C015WAZL0KH`, Melvin Mcglothin [2020-07-17 12:58:35]."
+  },
+  {
+    "question": "What did Rakesh Gupta experience when trying to load Birthnames data in his helloworld plugin?",
+    "gold_answer": "He received a 500 internal server error.",
+    "rag_answer": "Rakesh Gupta experienced a **500 internal server error** when attempting to load data from the 'Birthnames' datasource in his newly created helloworld plugin. Despite the plugin being created successfully, the data from the datasource was not being reflected, leading to the error. This issue occurred when using the custom plugin endpoint and payload provided in the context. \n\n**Sources**:  \n- Document [ID: 20] (Channel: C0170U650CQ, timestamp: 2020-08-05 12:00:10)  \n- Document [ID: 449] (Channel: C7G8CG0LR, timestamp: 2020-08-05 11:51:29)"
+  },
+  {
+    "question": "What is the dynamic filtering problem with 3 managers?",
+    "gold_answer": "The managers have userIDs manager-1, manager-2, and manager-3. When manager-1 logs in, they should see only rows where manager_id=1. The user is seeking a dynamic solution instead of manual RLS clauses.",
+    "rag_answer": "The dynamic filtering problem with 3 managers involves implementing Row Level Security (RLS) to restrict data visibility based on the logged-in manager's identity. Currently, this is achieved by manually setting static RLS clauses like `manager_id = 1` for each manager (e.g., manager-1, manager-2, manager-3). However, this approach becomes unscalable if there are 10,000 managers, as it would require configuring 10,000 separate RLS rules. The desired solution is to use a dynamic function like `manager_id = get_manager_id()` to automatically retrieve the logged-in manager's ID and apply RLS dynamically based on that value, eliminating the need for manual configuration.\n\n**Source**: Tequila Toombs [2020-07-17 10:26:05], Channel: C016B3LG5B4."
+  },
+  {
+    "question": "What is the URL for the properly configured WSGI HTTP server page in the Superset docs?",
+    "gold_answer": "https://superset.incubator.apache.org/installation.html#a-proper-wsgi-http-server",
+    "rag_answer": "The information provided in the context does not specify a URL for the properly configured WSGI HTTP server page in the Superset documentation. The documents mention configuration ports (e.g., `SUPERSET_WEBSERVER_PORT = 8088` and `WEBDRIVER_BASEURL = http://0.0.0.0:8080/`) and reference using **gunicorn** as the WSGI server, but no direct link to a Superset documentation page is cited. \n\nFor precise documentation details, consult the official [Apache Superset documentation](https://superset.apache.org/docs/)."
+  },
+  {
+    "question": "What is the issue with session cookie invalidation on logout for Google OAuth?",
+    "gold_answer": "The session cookie changes on the browser after logout, but the old session ID is not invalidated on the server, allowing it to still be used for calls.",
+    "rag_answer": "The issue described is that when a user logs out via Google OAuth, the session (or session cookie) is renewed on the browser, but the old session cookie is not properly invalidated. This leaves the previous session ID potentially usable for unauthorized access, as noted in the Slack threads. Specifically:\n\n1. **Velvet Vinyard (2020-08-24 15:15:35)** observed that after logout, the session cookie changes, but the old one remains active and is not invalidated.  \n2. **Velvet Vinyard (2020-08-07 08:00:07)** raised a similar concern with Flask sessions, noting that even after logout, the previous session ID could still be used to make calls.  \n\nThe core problem is **inadequate session cookie invalidation** upon logout, which could pose a security risk if the old session ID is reused. However, the context does not explicitly detail a resolution for this issue.  \n\nSource: Channel [C015WAZL0KH], messages from Velvet Vinyard (2020-08-07 and 2020-08-24)."
+  },
+  {
+    "question": "Who is Hossein and what is his company?",
+    "gold_answer": "Hossein is a data engineer from Tehran, Iran working at Alopeyk company (On-Demand motorbike ride).",
+    "rag_answer": "Hossein is a data engineer at Alopeyk, an on-demand motorbike ride company. This information is provided in a message from the Slack channel C015WAR4SDV, posted by Jean Jahn on 2020-07-09 at 10:24:13, though the message itself attributes the introduction to Hossein. \n\nSource: Document [ID: 17], Channel: C015WAR4SDV, Timestamp: 2020-07-09 10:24:13."
+  },
+  {
+    "question": "What is the issue with label color configuration across a Superset instance?",
+    "gold_answer": "User U01597CKQHF wanted to enforce a label color across multiple dashboards globally rather than editing metadata individually for each dashboard.",
+    "rag_answer": "The issue with label color configuration across a Superset instance is that there is no built-in, centralized way to enforce consistent label colors across multiple dashboards or metrics. While users can manually apply label colors via the \"Edit Metadata\" feature on individual dashboards, this process must be repeated for each dashboard separately, leading to potential inconsistencies. Toney Tedford highlighted this challenge in a 2020 Slack thread, noting the lack of a scalable solution to apply uniform color rules based on labels across the entire instance (Document [ID: 22], Channel: C016B3LG5B4, 2020-07-28 13:57:12). No global configuration option or database-level workaround was explicitly mentioned in the context."
+  },
+  {
+    "question": "What did Aaron work on at Preset?",
+    "gold_answer": "Aaron worked on enhancements to the viz plugin architecture and Preset's Superset-as-a-service offering.",
+    "rag_answer": "Aaron worked on enhancements to the viz plugin architecture and Preset's Superset-as-a-service offering at Preset. This information is sourced from Document [ID: 31], where Aleisha Araya (though the message claims to be from Aaron) provides this detail."
+  },
+  {
+    "question": "Which pull request did user UM4AW481K want to merge to fix Slack integration?",
+    "gold_answer": "Pull request #10345.",
+    "rag_answer": "The pull request mentioned in the context is <https://github.com/apache/incubator-superset/pull/[PHONE]>, which fixes the Slack integration. However, the user \"UM4AW481K\" is not explicitly referenced in the provided context. The message about the pull request was posted by **Zachariah Zemlicka** in channel **CH307T4JG** on **2020-07-16 19:50:42** (Document [ID: 6]). If \"UM4AW481K\" corresponds to Zachariah Zemlicka (or another user not named in the context), the relevant PR remains the one linked above. \n\n**Source**: Document [ID: 6], channel CH307T4JG, Zachariah Zemlicka [2020-07-16 19:50:42]."
+  },
+  {
+    "question": "Who is Gabe Fett and what does he lead?",
+    "gold_answer": "Gabe Fett (or Boba) leads talent at Preset.",
+    "rag_answer": "Gabe Fett, also known as Boba, leads talent at Preset. This information was shared by Cordia Cook (who identified themselves as Gabe Fett) in the channel C015WAR4SDV on 2020-07-02 at 17:34:32."
+  },
+  {
+    "question": "Who is Brandon and what is his location?",
+    "gold_answer": "Brandon (user U01439D0AN9) is from Texas and lives in C\u00f3rdoba, Argentina.",
+    "rag_answer": "Brandon, whose friends call him \"Bub\" (a nod to his Texas roots), is a Python developer currently based in **C\u00f3rdoba, Argentina**. He previously worked as a journalist and enjoys writing for both humans and machines. \n\n**Source**: Sharan Stack [2020-07-02 17:53:12] in channel C015WAR4SDV."
+  },
+  {
+    "question": "How many years of experience does Negi have working on Superset?",
+    "gold_answer": "2 years.",
+    "rag_answer": "Negi has **2 years** of experience working on Superset, as stated in their introduction in the Slack message thread (Document [ID: 15], Channel: C015WAR4SDV, timestamp: 2020-07-28 06:46:44)."
+  },
+  {
+    "question": "What are the two custom features Negi and his team built in Superset?",
+    "gold_answer": "Cohort analysis and Funnel.",
+    "rag_answer": "Negi and his team built two custom features in Superset: **Cohort analysis** and **Funnel**.  \n\nSource: Deane Dobson (assuming \"Negi\" refers to the speaker in the message) in channel **C015WAR4SDV** on **2020-07-28 06:46:44** (Document [ID: 15])."
+  },
+  {
+    "question": "What is the name of the blog post by Evan regarding BigQuery?",
+    "gold_answer": "Connecting Superset to BigQuery.",
+    "rag_answer": "The context provided does not mention a blog post by Evan regarding BigQuery. The blog posts related to BigQuery and Superset are authored by Darius Discher, as noted in documents [ID: 32] and [ID: 960]. Evan's Slack message (Document [ID: 25]) discusses his role at Preset and work on Superset but does not reference a blog post."
+  },
+  {
+    "question": "Who did user U017193F7JQ ask if they are interested in the filter redesign project?",
+    "gold_answer": "Ryan (user U019D20J9KK).",
+    "rag_answer": "The information provided in the context does not mention user **U017193F7JQ** or any interaction involving this user ID. The only mention of someone being asked about interest in the filter redesign project is **Markita Miah** asking **Sixta Soule** (Document [ID: 38](https://example.com/38)), but this does not involve the user ID in question. \n\n**Answer:** There is no information in the provided context about user **U017193F7JQ** being asked about the filter redesign project."
+  },
+  {
+    "question": "What is the ECharts viz plugin project status mentioned by user UH0UPCJVD?",
+    "gold_answer": "They are in the final steps of introducing the first ECharts-based charts into Superset.",
+    "rag_answer": "The information provided in the context does not mention any user with the ID **UH0UPCJVD** or their comments regarding the ECharts viz plugin project status. Therefore, I cannot determine the project status based on the given documents. \n\nIf you have additional context or documents involving this user, please provide them for further assistance."
+  },
+  {
+    "question": "Who is Adam and what is his background?",
+    "gold_answer": "Adam is an analyst at a San Francisco-based startup who has worked with Superset for a year.",
+    "rag_answer": "Adam is an analyst at a SF-based startup that introduced Superset into their ecosystem approximately a year before the message was sent (July 2020). This information is provided in a Slack message from user **Nery Nuzzo** in channel **C015WAR4SDV** on **2020-07-06 17:32:10**, where Nery Nuzzo states:  \n*\"Hey, I'm Adam -- I'm an analyst at a SF-based startup. We introduced Superset into our ecosystem about a year ago.\"*  \n\nNote: The message is sent by **Nery Nuzzo**, but the content explicitly identifies the speaker as **Adam**. The context does not clarify whether \"Adam\" and \"Nery Nuzzo\" refer to the same person or different individuals."
+  }
+]

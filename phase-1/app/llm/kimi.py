@@ -70,6 +70,7 @@ def ensure_ollama_running(model_name="llama3"):
 def load_env():
     # Search for .env in potential parent paths relative to this file
     env_paths = [
+        os.path.join(os.path.dirname(__file__), "..", "..", "..", ".env"),
         os.path.join(os.path.dirname(__file__), "..", "..", ".env"),
         os.path.join(os.path.dirname(__file__), "..", ".env"),
         os.path.join(os.path.dirname(__file__), ".env"),
