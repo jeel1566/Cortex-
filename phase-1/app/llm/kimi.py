@@ -6,6 +6,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 def ensure_ollama_running(model_name="llama3"):
+    model_name = model_name.strip()
     print("Checking if Ollama is running...")
     ollama_base_url = os.environ.get("OLLAMA_ENDPOINT", "http://localhost:11434/v1")
     # Parse base port/host (standard is http://localhost:11434)
@@ -84,7 +85,7 @@ def load_env():
                         if line and not line.startswith("#"):
                             if "=" in line:
                                 k, v = line.split("=", 1)
-                                os.environ[k.strip()] = v.strip().strip('"').strip("'")
+                                os.environ[k.strip()] = v.strip().strip('"').strip("'").strip()
                 break
             except Exception as e:
                 print(f"Warning: Failed to load .env from {abs_path}: {e}")
@@ -110,7 +111,7 @@ class KimiClient:
         if provider == "ollama":
             self.endpoint = endpoint or os.environ.get("OLLAMA_ENDPOINT", "http://localhost:11434/v1")
             self.api_key = api_key or "ollama"
-            self.model_name = model_name or os.environ.get("OLLAMA_MODEL", "llama3")
+            self.model_name = (model_name or os.environ.get("OLLAMA_MODEL", "llama3")).strip()
             # Auto start ollama and pull model
             ensure_ollama_running(self.model_name)
         else:
