@@ -152,17 +152,63 @@ class KimiClient:
         if response_format:
             payload["response_format"] = response_format
             
-        try:
-            provider = os.environ.get("LLM_PROVIDER", "azure").lower()
-            timeout_val = 300 if provider == "ollama" else 60
-            response = requests.post(url, headers=headers, json=payload, timeout=timeout_val)
-            response.raise_for_status()
-            data = response.json()
-            return data['choices'][0]['message']['content']
-        except Exception as e:
-            if 'response' in locals() and response is not None:
-                print(f"API Error Response: {response.text}")
-            raise RuntimeError(f"Kimi API request failed: {e}")
+        max_retries = 5
+        base_delay = 2.0
+        response = None
+        
+        for attempt in range(max_retries):
+            try:
+                provider = os.environ.get("LLM_PROVIDER", "azure").lower()
+                timeout_val = 300 if provider == "ollama" else 60
+                response = requests.post(url, headers=headers, json=payload, timeout=timeout_val)
+                
+                # Check for 429 rate limit
+                if response.status_code == 429:
+                    retry_after = response.headers.get("retry-after")
+                    wait_time = base_delay * (2 ** attempt)
+                    if retry_after:
+                        try:
+                            wait_time = float(retry_after)
+                        except ValueError:
+                            pass
+                    else:
+                        try:
+                            err_json = response.json()
+                            err_msg = err_json.get("error", {}).get("message", "")
+                            print(f"[RATE_LIMIT] 429 Rate limit hit: {err_msg}")
+                            # Match e.g. "try again in 1m23.4s" or "try again in 23s"
+                            import re
+                            m = re.search(r'try again in (?:(\d+)m)?([\d.]+)s', err_msg)
+                            if m:
+                                mins = float(m.group(1)) if m.group(1) else 0.0
+                                secs = float(m.group(2))
+                                wait_time = mins * 60 + secs + 0.5
+                        except Exception:
+                            pass
+                    
+                    print(f"[RATE_LIMIT] Request rate limited. Waiting {wait_time:.2f} seconds before retry {attempt + 1}/{max_retries}...")
+                    time.sleep(wait_time)
+                    continue
+                
+                response.raise_for_status()
+                data = response.json()
+                return data['choices'][0]['message']['content']
+            except requests.exceptions.HTTPError as he:
+                if response is not None and response.status_code == 429:
+                    pass
+                else:
+                    if response is not None:
+                        print(f"API Error Response: {response.text}")
+                    if attempt == max_retries - 1:
+                        raise
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    if response is not None:
+                        print(f"API Error Response: {response.text}")
+                    raise RuntimeError(f"Kimi API request failed: {e}")
+                wait_time = base_delay * (2 ** attempt)
+                print(f"[WARNING] API request failed with error: {e}. Retrying in {wait_time:.2f}s...")
+                time.sleep(wait_time)
 
 _client = None
 

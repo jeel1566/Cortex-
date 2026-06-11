@@ -19,6 +19,62 @@ from llama_index.core.query_engine import BaseQueryEngine
 from llama_index.core.base.response.schema import Response
 from app.llm.kimi import KimiLlamaIndexLLM
 
+# Monkey-patch HuggingFaceEmbedding to cache document embeddings
+import hashlib
+original_get_text_embedding_batch = HuggingFaceEmbedding.get_text_embedding_batch
+
+def patched_get_text_embedding_batch(self, texts, **kwargs):
+    cache_file = os.environ.get("DOC_EMBEDDINGS_CACHE_PATH")
+    if not cache_file:
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        cache_file = os.path.join(base_dir, 'data', 'doc_embeddings_cache.json')
+    
+    cache = {}
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                cache = json.load(f)
+        except Exception as e:
+            print(f"[CACHE] Error reading cache file: {e}")
+            
+    embeddings = [None] * len(texts)
+    missing_indices = []
+    missing_texts = []
+    
+    for idx, text in enumerate(texts):
+        text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+        if text_hash in cache:
+            embeddings[idx] = cache[text_hash]
+        else:
+            missing_indices.append(idx)
+            missing_texts.append(text)
+            
+    if missing_texts:
+        print(f"\n[CACHE] Cache miss: computing embeddings for {len(missing_texts)} / {len(texts)} documents...")
+        bound_original = original_get_text_embedding_batch.__get__(self, type(self))
+        computed_embeddings = bound_original(missing_texts, **kwargs)
+        
+        for idx, computed_val in zip(missing_indices, computed_embeddings):
+            text = texts[idx]
+            text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+            embedding_val = [float(x) for x in computed_val]
+            embeddings[idx] = embedding_val
+            cache[text_hash] = embedding_val
+            
+        print("[CACHE] Updating cache file...")
+        try:
+            os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(cache, f)
+        except Exception as e:
+            print(f"[CACHE] Error writing cache file: {e}")
+    else:
+        print(f"\n[CACHE] All {len(texts)} document embeddings successfully loaded from cache.")
+        
+    return embeddings
+
+HuggingFaceEmbedding.get_text_embedding_batch = patched_get_text_embedding_batch
+
 def load_user_mappings(users_csv):
     user_map = {}
     if not users_csv or not os.path.exists(users_csv):
@@ -31,7 +87,11 @@ def load_user_mappings(users_csv):
                 name = row.get('name', '')
                 real_name = row.get('real_name', '')
                 if uid:
-                    user_map[uid] = real_name or name or uid
+                    mapped_name = real_name or name or uid
+                    if mapped_name != uid:
+                        user_map[uid] = f"{mapped_name} [{uid}]"
+                    else:
+                        user_map[uid] = uid
     except Exception as e:
         print(f"Warning loading users: {e}")
     return user_map
@@ -41,7 +101,7 @@ def redact_pii(text: str) -> str:
         return ""
     text = re.sub(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', '[EMAIL]', text)
     text = re.sub(r'\b\d{3}-\d{2}-\d{4}\b', '[SSN]', text)
-    text = re.sub(r'\+?\d{1,4}?[-.\s]?\(?\d{1,3}?\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}', '[PHONE]', text)
+    text = re.sub(r'(?<!\w)(?:\+?\d{1,4}[-.\s]\(?\d{2,3}\)?[-.\s]\d{3,4}[-.\s]\d{4}\b|\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b)', '[PHONE]', text)
     return text
 
 def replace_user_mentions(text: str, user_map: dict) -> str:
