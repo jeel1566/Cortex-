@@ -1,50 +1,62 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+<!--
+Sync Impact Report:
+- Version change: None (Initial Constitution) -> 1.0.0
+- List of modified principles:
+  * [PRINCIPLE_1_NAME] -> I. Structured Knowledge over Raw Chunks
+  * [PRINCIPLE_2_NAME] -> II. Local & Fast Execution
+  * [PRINCIPLE_3_NAME] -> III. Strict Ingestion Filtering & Cost Control
+  * [PRINCIPLE_4_NAME] -> IV. Synthesis Validation & Verification
+  * [PRINCIPLE_5_NAME] -> V. Version Control & Auditability
+- Added sections:
+  * Technology Stack Constraints
+  * Development Workflow & Quality Gates
+- Removed sections: None
+- Templates requiring updates:
+  * .specify/templates/plan-template.md (✅ updated)
+  * .specify/templates/spec-template.md (✅ updated)
+  * .specify/templates/tasks-template.md (✅ updated)
+- Follow-up TODOs: None
+-->
+
+# Cortex Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Structured Knowledge over Raw Chunks
+Company knowledge must be structured like a book (Index -> Chapters -> Pages) rather than fragmented arbitrary text chunks. Every page covers exactly one answerable decision or process with explicit links, ensuring zero lost context during agent traversal.
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+### II. Local & Fast Execution
+The core retrieval and embedding engine must execute locally and synchronously to ensure a total retrieval latency under 200ms p99. Use fastembed with BAAI/bge-small-en-v1.5 and a local SQLite database to prevent network overhead and third-party API dependencies for search operations.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### III. Strict Ingestion Filtering & Cost Control
+Filter raw inputs ruthlessly (skipping messages under 20 words, duplicates, bot messages, calendar invites) before running LLM synthesis. Deduplicate using content hashes to minimize LLM synthesis calls and onboarding/running costs.
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### IV. Synthesis Validation & Verification
+All generated knowledge pages must pass structured LLM-based verification checks, including proposition coverage (>= 90%), hallucination rate (<= 2%), and completeness (score >= 7/10). No hallucinated or unsourced information is allowed to persist.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### V. Version Control & Auditability
+All knowledge pages must be stored in a Git repository. Every update, creation, or feedback-triggered change must be committed programmatically with a clear message and diff, establishing a transparent history of page progression.
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+## Technology Stack Constraints
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+- **Language**: Python 3.11+
+- **API Framework**: FastAPI
+- **Database**: SQLite for MVP (up to 50k pages)
+- **Vector Index**: hnswlib / local fastembed (BAAI/bge-small-en-v1.5)
+- **LLM API**: DeepSeek-V3 via Azure AI Foundry
+- **Hosting**: Local VM or single instance for MVP
+- **Frontend**: Next.js 14 with Clerk for Auth
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+## Development Workflow & Quality Gates
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+- **Test Coverage**: All core modules (embeddings, classifier, slack/github connectors, synthesis validation, retrieval routes) must have comprehensive unit/integration tests using pytest and mocked API responses.
+- **PII Filtering**: Strip names, emails, phones, and SSNs before data is passed to any external LLM.
+- **Feedback Loop**: Enable query logging and post-query feedback routes to flag inaccurate or outdated pages, automatically routing them back to the ingestion pipeline for re-synthesis.
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+- The Cortex Constitution is the single source of truth for engineering practices and architectural rules.
+- Any modifications to the core principles require updating this file, incrementing the version, and ensuring that all templates stay in sync.
+- All code changes must align with the performance (200ms latency), testing, and validation rules specified here.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Version**: 1.0.0 | **Ratified**: 2026-06-08 | **Last Amended**: 2026-06-08

@@ -106,21 +106,262 @@ except ImportError:
 
 from urllib.parse import urlparse
 
-class KimiClient:
+# ──────────────────────────────────────────────────────────────────────────────
+# CortexLLMClient — unified LLM client supporting three provider modes:
+#   1. local_ai   → Ollama running locally (default: http://localhost:11434/v1)
+#   2. web_api    → Any OpenAI-compatible web API (Groq, Azure, OpenAI, etc.)
+#   3. coding_agent → Developer-facing AI agents (Codex, Copilot, Antigravity,
+#                     etc.) via a local or remote OpenAI-compatible endpoint
+#
+# Select the mode via the LLM_PROVIDER environment variable.
+# For backward compatibility, "ollama" maps to local_ai and "azure" maps to web_api.
+# ──────────────────────────────────────────────────────────────────────────────
+def ensure_codex_server_running(endpoint="ws://127.0.0.1:4500"):
+    print(f"Checking if Codex App Server is running at {endpoint}...")
+    from urllib.parse import urlparse
+    import socket
+    import subprocess
+    import os
+    import time
+    
+    parsed = urlparse(endpoint)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 4500
+    
+    # Try to connect to check if running
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(1.0)
+    try:
+        s.connect((host, port))
+        s.close()
+        print("Codex App Server is already running.")
+        return
+    except (ConnectionRefusedError, socket.timeout, OSError):
+        print("Codex App Server is not running. Attempting to start it...")
+        try:
+            listen_arg = f"ws://{host}:{port}"
+            if os.name == 'nt':  # Windows
+                subprocess.Popen(
+                    ["codex", "app-server", "--listen", listen_arg],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                    shell=True
+                )
+            else:  # Unix/macOS
+                subprocess.Popen(
+                    ["codex", "app-server", "--listen", listen_arg],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    preexec_fn=os.setpgrp
+                )
+            
+            # Wait for Codex App Server to spin up
+            for i in range(15):
+                time.sleep(1)
+                s2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s2.settimeout(1.0)
+                try:
+                    s2.connect((host, port))
+                    s2.close()
+                    print("Codex App Server started successfully.")
+                    break
+                except (ConnectionRefusedError, socket.timeout, OSError):
+                    continue
+            else:
+                raise RuntimeError(f"Failed to start Codex App Server. Please ensure Codex CLI is installed and run 'codex app-server --listen {listen_arg}' manually.")
+        except FileNotFoundError:
+            raise RuntimeError(
+                "Codex executable not found. Please ensure Codex CLI is installed and added to your system PATH."
+            )
+        except Exception as e:
+            raise RuntimeError(f"Error starting Codex App Server: {e}")
+
+def run_async_in_thread(coro):
+    import threading
+    import asyncio
+    from queue import Queue
+    
+    q = Queue()
+    
+    def worker():
+        try:
+            val = asyncio.run(coro)
+            q.put((True, val))
+        except Exception as e:
+            q.put((False, e))
+            
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join()
+    
+    success, res = q.get()
+    if success:
+        return res
+    else:
+        raise res
+
+async def _execute_prompt_ws(endpoint, prompt, model_name=None):
+    import websockets
+    import json
+    async with websockets.connect(endpoint) as ws:
+        # 1. Initialize
+        await ws.send(json.dumps({
+            "jsonrpc": "2.0",
+            "method": "initialize",
+            "id": 1,
+            "params": {
+                "clientInfo": {
+                    "name": "cortex-client",
+                    "version": "1.0.0"
+                }
+            }
+        }))
+        await ws.recv()
+        
+        # 2. Start Thread
+        start_params = {
+            "ephemeral": True,
+            "approvalPolicy": "never",
+            "sandbox": "read-only"
+        }
+        if model_name:
+            start_params["model"] = model_name
+            
+        await ws.send(json.dumps({
+            "jsonrpc": "2.0",
+            "method": "thread/start",
+            "id": 2,
+            "params": start_params
+        }))
+        thread_data = json.loads(await ws.recv())
+        thread_id = thread_data.get("result", {}).get("thread", {}).get("id")
+        if not thread_id:
+            raise RuntimeError("Failed to obtain thread ID from Codex App Server.")
+            
+        # 3. Start Turn
+        await ws.send(json.dumps({
+            "jsonrpc": "2.0",
+            "method": "turn/start",
+            "id": 3,
+            "params": {
+                "threadId": thread_id,
+                "input": [
+                    {
+                        "type": "text",
+                        "text": prompt
+                    }
+                ]
+            }
+        }))
+        
+        # Read incoming messages until turn is complete
+        response_text = None
+        while True:
+            resp = await ws.recv()
+            data = json.loads(resp)
+            method = data.get("method")
+            if method == "item/completed":
+                params = data.get("params", {})
+                item = params.get("item", {})
+                if item.get("type") == "agentMessage":
+                    response_text = item.get("text")
+            elif method == "thread/status/changed":
+                status_type = data.get("params", {}).get("status", {}).get("type")
+                if status_type == "idle":
+                    break
+        
+        if response_text is None:
+            raise RuntimeError("Codex App Server completed without producing an agentMessage.")
+        return response_text
+
+class CortexLLMClient:
+    """
+    Unified LLM client for the Cortex Knowledge OS.
+
+    Provider modes (set via LLM_PROVIDER env var):
+        local_ai     | Ollama running locally
+        web_api      | Any OpenAI-compatible web API (Groq, Azure, OpenAI, etc.)
+        coding_agent | Coding agent endpoints (Codex, GitHub Copilot,
+                     | Antigravity, etc.)
+
+    Backward-compatible aliases: "ollama" → local_ai, "azure" → web_api.
+    """
+
+    # Map legacy and canonical provider names → canonical key
+    _PROVIDER_MAP = {
+        "ollama":        "local_ai",
+        "local_ai":      "local_ai",
+        "local":         "local_ai",
+        "azure":         "web_api",
+        "web_api":       "web_api",
+        "web":           "web_api",
+        "openai":        "web_api",
+        "groq":          "web_api",
+        "coding_agent":  "coding_agent",
+        "codex":         "codex_cli",
+        "codex_cli":     "codex_cli",
+        "copilot":       "coding_agent",
+        "antigravity":   "coding_agent",
+        "agent":         "coding_agent",
+    }
+
     def __init__(self, endpoint=None, api_key=None, model_name=None):
-        provider = os.environ.get("LLM_PROVIDER", "azure").lower()
-        if provider == "ollama":
-            self.endpoint = endpoint or os.environ.get("OLLAMA_ENDPOINT", "http://localhost:11434/v1")
-            self.api_key = api_key or "ollama"
+        raw_provider = os.environ.get("LLM_PROVIDER", "web_api").lower().strip()
+        self.provider = self._PROVIDER_MAP.get(raw_provider, "web_api")
+
+        if self.provider == "local_ai":
+            self.endpoint   = endpoint   or os.environ.get("OLLAMA_ENDPOINT", "http://localhost:11434/v1")
+            self.api_key    = api_key    or "ollama"
             self.model_name = (model_name or os.environ.get("OLLAMA_MODEL", "llama3")).strip()
-            # Auto start ollama and pull model
             ensure_ollama_running(self.model_name)
-        else:
-            self.endpoint = endpoint or os.environ.get("AZURE_ENDPOINT", "")
-            self.api_key = api_key or os.environ.get("AZURE_API_KEY", "")
-            self.model_name = model_name or os.environ.get("AZURE_MODEL_NAME", "kimi-k2.5")
+
+        elif self.provider == "coding_agent":
+            # Coding agents expose an OpenAI-compatible endpoint locally or remotely.
+            # Point AGENT_ENDPOINT to whatever port the agent listens on.
+            self.endpoint   = endpoint   or os.environ.get("AGENT_ENDPOINT", "http://localhost:11435/v1")
+            self.api_key    = api_key    or os.environ.get("AGENT_API_KEY", "agent")
+            self.model_name = model_name or os.environ.get("AGENT_MODEL", "gpt-4o")
+            print(f"[CortexLLM] Using Coding Agent provider -> {self.model_name} @ {self.endpoint}")
+
+        elif self.provider == "codex_cli":
+            self.endpoint   = endpoint   or os.environ.get("AGENT_ENDPOINT", "ws://127.0.0.1:4500")
+            self.api_key    = api_key    or os.environ.get("AGENT_API_KEY", "cli")
+            self.model_name = model_name or os.environ.get("AGENT_MODEL") or os.environ.get("CODEX_MODEL") or ""
+            ensure_codex_server_running(self.endpoint)
+            print(f"[CortexLLM] Using Codex CLI provider -> {self.model_name or 'default'} @ {self.endpoint}")
+
+        else:  # web_api
+            self.endpoint   = endpoint   or os.environ.get("AZURE_ENDPOINT",      "") \
+                                         or os.environ.get("WEB_API_ENDPOINT",    "")
+            self.api_key    = api_key    or os.environ.get("AZURE_API_KEY",        "") \
+                                         or os.environ.get("WEB_API_KEY",         "")
+            self.model_name = model_name or os.environ.get("AZURE_MODEL_NAME",    "") \
+                                         or os.environ.get("WEB_API_MODEL",       "llama-3.1-8b-instant")
             
     def chat_completion(self, messages: List[Dict[str, str]], temperature=0.7, max_tokens=2048, response_format=None) -> str:
+        if self.provider == "codex_cli":
+            # Convert messages to a formatted prompt string
+            prompt_parts = []
+            for msg in messages:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role == "system":
+                    prompt_parts.append(f"System instructions:\n{content}\n")
+                elif role == "user":
+                    prompt_parts.append(f"User request:\n{content}\n")
+                elif role == "assistant":
+                    prompt_parts.append(f"Assistant response:\n{content}\n")
+                else:
+                    prompt_parts.append(f"{role.capitalize()}:\n{content}\n")
+            
+            prompt = "\n".join(prompt_parts)
+            
+            # Execute prompt via the running Codex App Server using the WebSocket client in a thread
+            print(f"[CortexLLM] Sending prompt to Codex App Server at {self.endpoint}")
+            coro = _execute_prompt_ws(self.endpoint, prompt, self.model_name)
+            return run_async_in_thread(coro)
+
         if not self.endpoint:
             raise ValueError("LLM endpoint must be set.")
             
@@ -152,6 +393,7 @@ class KimiClient:
         if response_format:
             payload["response_format"] = response_format
             
+        print(f"[CortexLLM] provider={self.provider} model={self.model_name}")
         max_retries = 5
         base_delay = 2.0
         response = None
@@ -210,13 +452,21 @@ class KimiClient:
                 print(f"[WARNING] API request failed with error: {e}. Retrying in {wait_time:.2f}s...")
                 time.sleep(wait_time)
 
+# ── Backward-compat alias ──────────────────────────────────────────────────────
+# KimiClient is kept as an alias so existing code continues to work unchanged.
+KimiClient = CortexLLMClient
+
 _client = None
 
-def get_kimi_client() -> KimiClient:
+def get_kimi_client() -> CortexLLMClient:
+    """Returns the global singleton CortexLLMClient (a.k.a. KimiClient)."""
     global _client
     if _client is None:
-        _client = KimiClient()
+        _client = CortexLLMClient()
     return _client
+
+# Convenience alias
+get_cortex_client = get_kimi_client
 
 if LLAMA_INDEX_AVAILABLE:
     class KimiLlamaIndexLLM(CustomLLM):

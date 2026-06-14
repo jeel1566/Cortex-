@@ -64,6 +64,21 @@ def split_into_sentences(text: str) -> List[str]:
     sentences = re.split(r'(?<=[.!?])\s+', text.strip())
     return [s.strip() for s in sentences if s.strip()]
 
+def parse_ts_to_iso(ts_str: str) -> str:
+    """Safely parses a Unix timestamp string or formatted date string to ISO 8601 format."""
+    if not ts_str:
+        return ""
+    try:
+        val = float(ts_str)
+        return datetime.datetime.utcfromtimestamp(val).isoformat() + "Z"
+    except ValueError:
+        try:
+            # Try parsing formatted date string like '2020-08-03 20:02:29'
+            dt = datetime.datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S')
+            return dt.isoformat() + "Z"
+        except Exception:
+            return ts_str
+
 def load_and_filter_csv(csv_path: str) -> List[Dict[str, Any]]:
     """
     Loads raw messages from CSV and filters out joins, leaves, and short entries.
@@ -114,7 +129,7 @@ def load_and_filter_csv(csv_path: str) -> List[Dict[str, Any]]:
                 "text": clean_text,
                 "user": mapped_user,
                 "channel": channel,
-                "timestamp": row.get('latest_reply', '') or datetime.datetime.utcfromtimestamp(float(ts)).isoformat() + "Z" if ts else "",
+                "timestamp": row.get('latest_reply', '') or parse_ts_to_iso(ts),
                 "source_id": f"slack://{channel}/{ts}"
             })
             
