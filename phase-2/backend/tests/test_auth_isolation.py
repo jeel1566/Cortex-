@@ -19,6 +19,12 @@ class TestAuthIsolation(unittest.TestCase):
         self.repo_a = get_tenant_repo_dir(self.tenant_a)
         self.repo_b = get_tenant_repo_dir(self.tenant_b)
         
+        # Patch decode_clerk_jwt to decode mock JWTs during tests
+        from unittest.mock import patch
+        self.patcher = patch('app.api.auth.decode_clerk_jwt')
+        self.mock_decode = self.patcher.start()
+        self.mock_decode.side_effect = lambda token: jwt.decode(token, "mock_secret", algorithms=["HS256"])
+        
         # Clean directories
         self.cleanup()
         
@@ -27,6 +33,7 @@ class TestAuthIsolation(unittest.TestCase):
         init_tenant_repo(self.tenant_b).close()
 
     def tearDown(self):
+        self.patcher.stop()
         self.cleanup()
         
     def cleanup(self):

@@ -2,41 +2,18 @@ import jwt
 import requests
 from fastapi import HTTPException, Header, Security, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from app.config import MOCK_CLERK_AUTH, CLERK_PUBLIC_KEY
+from app.config import CLERK_PUBLIC_KEY
 
 security_scheme = HTTPBearer()
 
 def decode_clerk_jwt(token: str) -> dict:
     """
-    Decodes the Clerk JWT.
-    If MOCK_CLERK_AUTH is enabled, it uses a mock secret signature check.
-    Otherwise, it validates using the public Clerk key configuration.
+    Decodes the Clerk JWT using the public Clerk key configuration (RS256).
     """
-    if MOCK_CLERK_AUTH:
-        try:
-            # 1. Try decoding mock token using a simple local secret
-            payload = jwt.decode(token, "mock_secret", algorithms=["HS256"])
-            return payload
-        except jwt.PyJWTError:
-            # 2. Try decoding as JWT without signature check (in case frontend is logged into a real Clerk session)
-            try:
-                payload = jwt.decode(token, options={"verify_signature": False})
-                return payload
-            except jwt.PyJWTError as e:
-                # 3. Fallback for plain unencoded dicts during simple tests
-                try:
-                    import base64
-                    import json
-                    padded = token + "=" * (4 - len(token) % 4)
-                    decoded = base64.b64decode(padded).decode('utf-8')
-                    return json.loads(decoded)
-                except Exception:
-                    raise HTTPException(status_code=401, detail=f"Invalid mock token format: {e}")
-                
     if not CLERK_PUBLIC_KEY:
         raise HTTPException(
             status_code=500, 
-            detail="Clerk Auth is enabled but CLERK_PUBLIC_KEY is not set."
+            detail="Clerk Auth public key is not set. CLERK_PUBLIC_KEY env variable is required."
         )
         
     try:
@@ -67,13 +44,6 @@ def get_current_agent(credentials: HTTPAuthorizationCredentials = Depends(securi
     tenant_id = payload.get("tenant_id")
     authority_level = payload.get("authority_level")
     
-    # In mock/development mode, provide defaults if claims are missing in the JWT
-    if MOCK_CLERK_AUTH:
-        if tenant_id is None:
-            tenant_id = "tenant_a"
-        if authority_level is None:
-            authority_level = 5
-            
     if tenant_id is None or authority_level is None:
         raise HTTPException(
             status_code=401, 

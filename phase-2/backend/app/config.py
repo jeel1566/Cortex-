@@ -28,9 +28,8 @@ LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "codex_cli")
 AGENT_ENDPOINT = os.environ.get("AGENT_ENDPOINT", "ws://127.0.0.1:4500")
 AGENT_MODEL = os.environ.get("AGENT_MODEL", "gpt-4o")
 
-# Clerk Auth Configurations (Mocked/Disabled if blank or requested)
+# Clerk Auth Configurations
 CLERK_PUBLIC_KEY = os.environ.get("CLERK_PUBLIC_KEY", "")
-MOCK_CLERK_AUTH = os.environ.get("MOCK_CLERK_AUTH", "true").lower() == "true"
 
 # Paths
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))

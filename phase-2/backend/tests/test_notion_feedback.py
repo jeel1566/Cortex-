@@ -21,6 +21,12 @@ class TestNotionFeedback(unittest.TestCase):
         self.tenant_id = "tenant_notion_test"
         self.repo_dir = get_tenant_repo_dir(self.tenant_id)
         
+        # Patch decode_clerk_jwt to decode mock JWTs during tests
+        from unittest.mock import patch
+        self.patcher = patch('app.api.auth.decode_clerk_jwt')
+        self.mock_decode = self.patcher.start()
+        self.mock_decode.side_effect = lambda token: jwt.decode(token, "mock_secret", algorithms=["HS256"])
+        
         self.cleanup()
         init_tenant_repo(self.tenant_id).close()
         
@@ -50,6 +56,7 @@ class TestNotionFeedback(unittest.TestCase):
         conn.commit()
 
     def tearDown(self):
+        self.patcher.stop()
         self.cleanup()
         
     def cleanup(self):
