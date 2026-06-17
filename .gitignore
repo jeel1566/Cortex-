@@ -27,6 +27,10 @@ env/
 # Data & generated artifacts (large files)
 phase-1/data/tenants/
 phase-1/eval/cortex_v1.json
+phase-2/backend/data/
+phase-2/frontend/node_modules/
+phase-2/frontend/.next/
+phase-2/frontend/out/
 
 # Cache
 .cache/

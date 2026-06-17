@@ -1,0 +1,371 @@
+import os
+import uuid
+import datetime
+import json
+import time
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
+from pydantic import BaseModel, Field
+from typing import List, Dict, Any, Optional
+
+from app.api.auth import get_current_agent, PermissionChecker
+from app.database.connection import get_tenant_connection
+from app.query_engine import CortexQueryEngine, _load_page
+from app.ingestion.pipeline import run_ingestion_pipeline
+from app.config import TENANTS_DIR
+from app.logging import get_logger
+from prometheus_client import Counter, Histogram
+
+logger = get_logger(__name__)
+router = APIRouter()
+
+QUERIES_COUNTER = Counter("cortex_queries_total", "Total queries executed", ["tenant_id"])
+LATENCY_HISTOGRAM = Histogram("cortex_query_latency_seconds", "Query latency distribution", ["tenant_id"])
+
+# ── Pydantic Request Models ──────────────────────────────────────────────────
+
+class QueryRequest(BaseModel):
+    question: str = Field(..., max_length=2000)
+    time_budget_ms: Optional[int] = 150
+
+class IngestRequest(BaseModel):
+    source_type: str
+    content: str
+    metadata: Dict[str, Any] = {}
+
+class FeedbackRequest(BaseModel):
+    query_id: str
+    feedback_type: str
+    affected_pages: Optional[List[str]] = []
+    correct_answer: Optional[str] = ""
+
+# ── POST /v1/query ───────────────────────────────────────────────────────────
+
+@router.post("/query")
+def query_knowledge(
+    request: QueryRequest,
+    agent: dict = Depends(PermissionChecker(min_level=0))
+):
+    tenant_id = agent["tenant_id"]
+    clearance = agent["authority_level"]
+    question = request.question
+    
+    tenant_dir = os.path.join(TENANTS_DIR, tenant_id)
+    if not os.path.exists(tenant_dir):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tenant repository has not been initialized. No pages exist."
+        )
+        
+    try:
+        t0 = time.time()
+        engine = CortexQueryEngine(tenant_dir=tenant_dir)
+        result = engine.query(question, user_clearance=clearance)
+        latency_sec = time.time() - t0
+        QUERIES_COUNTER.labels(tenant_id=tenant_id).inc()
+        LATENCY_HISTOGRAM.labels(tenant_id=tenant_id).observe(latency_sec)
+    except Exception as e:
+        logger.error("query_error", tenant_id=tenant_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error running query: {e}"
+        )
+        
+    # Log the query execution to the tenant's SQLite DB
+    conn = get_tenant_connection(tenant_id)
+    cursor = conn.cursor()
+    query_id = f"q_{uuid.uuid4().hex[:8]}"
+    
+    try:
+        cursor.execute(
+            """
+            INSERT INTO query_log (
+                id, tenant_id, question, pages_read, total_latency_ms,
+                authority_level, overall_confidence, had_conflict, had_knowledge_gap, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                query_id,
+                tenant_id,
+                question,
+                json.dumps(result["pages_read"]),
+                result["total_latency_ms"],
+                clearance,
+                0.90,  # overall_confidence mock
+                0,     # had_conflict
+                1 if len(result["knowledge_gaps"]) > 0 else 0,
+                datetime.datetime.utcnow().isoformat() + "Z"
+            )
+        )
+        conn.commit()
+    except Exception as e:
+        logger.error("query_log_error", error=str(e))
+        
+    return {
+        "query_id": query_id,
+        "pages": [
+            {
+                "id": pid,
+                "title": f"Page {pid}",
+                "content": f"Context block retrieved for {pid}"
+            } for pid in result["pages_read"]
+        ],
+        "traversal_path": result["traversal_path"],
+        "knowledge_gaps": result["knowledge_gaps"],
+        "overall_confidence": 0.90,
+        "total_latency_ms": result["total_latency_ms"],
+        "pages_read": len(result["pages_read"])
+    }
+
+# ── GET /v1/page/{page_id} ───────────────────────────────────────────────────
+
+@router.get("/page/{page_id}")
+def get_page(
+    page_id: str,
+    agent: dict = Depends(PermissionChecker(min_level=0))
+):
+    tenant_id = agent["tenant_id"]
+    clearance = agent["authority_level"]
+    
+    tenant_dir = os.path.join(TENANTS_DIR, tenant_id)
+    pages_dir = os.path.join(tenant_dir, "repo")
+    
+    res = _load_page(pages_dir, page_id)
+    if not res:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Page {page_id} not found."
+        )
+        
+    metadata, body = res
+    
+    # Filter propositions based on user clearance level
+    propositions = metadata.get("propositions", [])
+    filtered_props = []
+    
+    for prop in propositions:
+        sens = prop.get("sensitivity", "team")
+        required_level = 0
+        if sens == "team":
+            required_level = 1
+        elif sens == "confidential":
+            required_level = 3
+            
+        if clearance >= required_level:
+            filtered_props.append(prop)
+        else:
+            filtered_props.append({
+                "id": prop.get("id"),
+                "text": "[REDACTED - INSUFFICIENT CLEARANCE]",
+                "sensitivity": sens
+            })
+            
+    return {
+        "id": page_id,
+        "title": metadata.get("title", f"Page {page_id}"),
+        "version": metadata.get("version", 1),
+        "content": body,
+        "propositions": filtered_props,
+        "last_updated": metadata.get("last_updated"),
+        "owner": metadata.get("owner", "team"),
+        "access_level": metadata.get("access_level", "team"),
+        "sources": metadata.get("sources", [])
+    }
+
+# ── Background Ingestion Task ────────────────────────────────────────────────
+
+def run_background_ingest(tenant_id: str, job_id: str, content: str, source_type: str):
+    conn = get_tenant_connection(tenant_id)
+    cursor = conn.cursor()
+    
+    try:
+        # Update status to processing
+        cursor.execute(
+            "UPDATE ingestion_jobs SET status = 'processing' WHERE id = ?",
+            (job_id,)
+        )
+        conn.commit()
+        
+        # Raw content parsing (support single message or line-separated text)
+        lines = [line.strip() for line in content.split("\n") if line.strip()]
+        messages = []
+        for i, line in enumerate(lines):
+            messages.append({
+                "text": line,
+                "user": f"user_{i}",
+                "channel": "general",
+                "timestamp": f"{time.time() + i}",
+                "source_id": f"{source_type}://general/{time.time() + i}"
+            })
+            
+        # Run compiler pipeline
+        pages_created = run_ingestion_pipeline(tenant_id, messages)
+        
+        # Mark job complete
+        cursor.execute(
+            """
+            UPDATE ingestion_jobs 
+            SET status = 'complete', pages_created = ?, completed_at = ?
+            WHERE id = ?
+            """,
+            (
+                len(pages_created),
+                datetime.datetime.utcnow().isoformat() + "Z",
+                job_id
+            )
+        )
+        conn.commit()
+    except Exception as e:
+        logger.error("background_ingest_failed", job_id=job_id, error=str(e))
+        cursor.execute(
+            "UPDATE ingestion_jobs SET status = 'failed', completed_at = ? WHERE id = ?",
+            (datetime.datetime.utcnow().isoformat() + "Z", job_id)
+        )
+        conn.commit()
+
+# ── POST /v1/ingest ──────────────────────────────────────────────────────────
+
+@router.post("/ingest", status_code=status.HTTP_202_ACCEPTED)
+def ingest_data(
+    request: IngestRequest,
+    background_tasks: BackgroundTasks,
+    agent: dict = Depends(PermissionChecker(min_level=2))
+):
+    tenant_id = agent["tenant_id"]
+    job_id = f"job_{uuid.uuid4().hex[:8]}"
+    
+    conn = get_tenant_connection(tenant_id)
+    cursor = conn.cursor()
+    
+    # Log job entry
+    cursor.execute(
+        """
+        INSERT INTO ingestion_jobs (
+            id, tenant_id, status, source_type, created_at
+        ) VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            job_id,
+            tenant_id,
+            "queued",
+            request.source_type,
+            datetime.datetime.utcnow().isoformat() + "Z"
+        )
+    )
+    conn.commit()
+    
+    # Dispatch asynchronous background task
+    background_tasks.add_task(
+        run_background_ingest,
+        tenant_id=tenant_id,
+        job_id=job_id,
+        content=request.content,
+        source_type=request.source_type
+    )
+    
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "poll_url": f"/v1/ingest/{job_id}"
+    }
+
+# ── GET /v1/ingest/{job_id} ──────────────────────────────────────────────────
+
+@router.get("/ingest/{job_id}")
+def get_ingest_status(
+    job_id: str,
+    agent: dict = Depends(PermissionChecker(min_level=2))
+):
+    tenant_id = agent["tenant_id"]
+    conn = get_tenant_connection(tenant_id)
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM ingestion_jobs WHERE id = ?", (job_id,))
+    row = cursor.fetchone()
+    
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Ingestion job {job_id} not found."
+        )
+        
+    return {
+        "job_id": row["id"],
+        "status": row["status"],
+        "pages_created": row["pages_created"],
+        "pages_updated": row["pages_updated"],
+        "conflicts_found": row["conflicts_found"],
+        "completed_at": row["completed_at"]
+    }
+
+# ── POST /v1/feedback ────────────────────────────────────────────────────────
+
+@router.post("/feedback")
+def submit_feedback(
+    request: FeedbackRequest,
+    background_tasks: BackgroundTasks,
+    agent: dict = Depends(PermissionChecker(min_level=1))
+):
+    tenant_id = agent["tenant_id"]
+    feedback_id = f"fb_{uuid.uuid4().hex[:8]}"
+    
+    conn = get_tenant_connection(tenant_id)
+    cursor = conn.cursor()
+    
+    # Insert feedback entry
+    cursor.execute(
+        """
+        INSERT INTO feedback (
+            id, tenant_id, query_id, feedback_type, affected_pages, correct_answer, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            feedback_id,
+            tenant_id,
+            request.query_id,
+            request.feedback_type,
+            json.dumps(request.affected_pages),
+            request.correct_answer,
+            datetime.datetime.utcnow().isoformat() + "Z"
+        )
+    )
+    conn.commit()
+    
+    # Trigger re-synthesis task if correct answer correction is provided
+    resynthesis_queued = False
+    if request.correct_answer and request.affected_pages:
+        resynthesis_queued = True
+        job_id = f"job_re_{uuid.uuid4().hex[:8]}"
+        
+        cursor.execute(
+            """
+            INSERT INTO ingestion_jobs (
+                id, tenant_id, status, source_type, created_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                job_id,
+                tenant_id,
+                "queued",
+                "agent_decision",
+                datetime.datetime.utcnow().isoformat() + "Z"
+            )
+        )
+        # Update feedback link to job
+        cursor.execute("UPDATE feedback SET resynthesis_job_id = ? WHERE id = ?", (job_id, feedback_id))
+        conn.commit()
+        
+        # Dispatch background re-synthesis job
+        background_tasks.add_task(
+            run_background_ingest,
+            tenant_id=tenant_id,
+            job_id=job_id,
+            content=f"Correction feedback for {', '.join(request.affected_pages)}: {request.correct_answer}",
+            source_type="agent_decision"
+        )
+        
+    return {
+        "feedback_id": feedback_id,
+        "status": "received",
+        "pages_flagged": request.affected_pages,
+        "resynthesis_queued": resynthesis_queued
+    }
