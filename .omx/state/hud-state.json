@@ -1,0 +1,5 @@
+{
+  "last_turn_at": "2026-06-14T08:08:51.330Z",
+  "turn_count": 20,
+  "last_agent_output": "[\n  {\"id\": 0, \"type\": \"PROCEDURE\"},\n  {\"id\": 1, \"type\": \"PROCEDURE\"},\n  {\"id\": 2, \"type\": \"PRESCRIPT"
+}

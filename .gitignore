@@ -1,0 +1,33 @@
+# Environment & secrets
+.env
+.env.*
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Data & generated artifacts (large files)
+phase-1/data/tenants/
+phase-1/eval/cortex_v1.json
+
+# Cache
+.cache/
+*.cache
