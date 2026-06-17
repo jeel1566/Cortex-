@@ -116,6 +116,43 @@ def query_knowledge(
         "pages_read": len(result["pages_read"])
     }
 
+# ── GET /v1/pages ────────────────────────────────────────────────────────────
+
+@router.get("/pages")
+def list_pages(
+    agent: dict = Depends(PermissionChecker(min_level=0))
+):
+    tenant_id = agent["tenant_id"]
+    tenant_dir = os.path.join(TENANTS_DIR, tenant_id)
+    pages_dir = os.path.join(tenant_dir, "repo")
+    
+    if not os.path.exists(pages_dir):
+        return []
+        
+    pages = []
+    try:
+        for filename in os.listdir(pages_dir):
+            if filename.endswith(".md"):
+                page_id = filename[:-3]
+                res = _load_page(pages_dir, page_id)
+                if res:
+                    metadata, _ = res
+                    pages.append({
+                        "id": page_id,
+                        "title": metadata.get("title", f"Page {page_id}"),
+                        "version": metadata.get("version", 1),
+                        "owner": metadata.get("owner", "team"),
+                        "access_level": metadata.get("access_level", "team"),
+                        "last_updated": metadata.get("last_updated"),
+                    })
+    except Exception as e:
+        logger.error("list_pages_error", tenant_id=tenant_id, error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error listing pages: {e}"
+        )
+    return pages
+
 # ── GET /v1/page/{page_id} ───────────────────────────────────────────────────
 
 @router.get("/page/{page_id}")

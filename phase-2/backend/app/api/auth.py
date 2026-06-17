@@ -14,20 +14,24 @@ def decode_clerk_jwt(token: str) -> dict:
     """
     if MOCK_CLERK_AUTH:
         try:
-            # Decode mock token using a simple local secret
+            # 1. Try decoding mock token using a simple local secret
             payload = jwt.decode(token, "mock_secret", algorithms=["HS256"])
             return payload
-        except jwt.PyJWTError as e:
-            # Fallback for plain unencoded dicts during simple tests
+        except jwt.PyJWTError:
+            # 2. Try decoding as JWT without signature check (in case frontend is logged into a real Clerk session)
             try:
-                import base64
-                import json
-                # Try base64 decoding if not signed
-                padded = token + "=" * (4 - len(token) % 4)
-                decoded = base64.b64decode(padded).decode('utf-8')
-                return json.loads(decoded)
-            except Exception:
-                raise HTTPException(status_code=401, detail=f"Invalid mock token: {e}")
+                payload = jwt.decode(token, options={"verify_signature": False})
+                return payload
+            except jwt.PyJWTError as e:
+                # 3. Fallback for plain unencoded dicts during simple tests
+                try:
+                    import base64
+                    import json
+                    padded = token + "=" * (4 - len(token) % 4)
+                    decoded = base64.b64decode(padded).decode('utf-8')
+                    return json.loads(decoded)
+                except Exception:
+                    raise HTTPException(status_code=401, detail=f"Invalid mock token format: {e}")
                 
     if not CLERK_PUBLIC_KEY:
         raise HTTPException(
@@ -63,6 +67,13 @@ def get_current_agent(credentials: HTTPAuthorizationCredentials = Depends(securi
     tenant_id = payload.get("tenant_id")
     authority_level = payload.get("authority_level")
     
+    # In mock/development mode, provide defaults if claims are missing in the JWT
+    if MOCK_CLERK_AUTH:
+        if tenant_id is None:
+            tenant_id = "tenant_a"
+        if authority_level is None:
+            authority_level = 5
+            
     if tenant_id is None or authority_level is None:
         raise HTTPException(
             status_code=401, 
