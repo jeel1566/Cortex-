@@ -263,7 +263,7 @@ if __name__ == "__main__":
     if not os.environ.get("AZURE_ENDPOINT") and not os.environ.get("WEB_API_ENDPOINT"):
         os.environ["AZURE_ENDPOINT"]  = "https://api.groq.com/openai/v1"
     if not os.environ.get("AZURE_API_KEY") and not os.environ.get("WEB_API_KEY"):
-        os.environ["AZURE_API_KEY"]   = ""
+        os.environ["AZURE_API_KEY"]   = "<your-groq-api-key>"
     if not os.environ.get("AZURE_MODEL_NAME") and not os.environ.get("WEB_API_MODEL"):
         os.environ["AZURE_MODEL_NAME"] = "llama-3.1-8b-instant"
 
