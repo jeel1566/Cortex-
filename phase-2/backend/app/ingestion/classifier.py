@@ -33,7 +33,7 @@ Example Output:
 ]
 """
 
-def classify_sentences(sentences: List[str]) -> List[str]:
+def classify_sentences(sentences: List[str], tenant_id: str = None) -> List[str]:
     """
     Classifies a list of sentences into speech-act types.
     Returns a list of uppercase strings representing the type of each sentence in order.
@@ -41,7 +41,7 @@ def classify_sentences(sentences: List[str]) -> List[str]:
     if not sentences:
         return []
         
-    client = get_kimi_client()
+    client = get_kimi_client(tenant_id)
     input_data = [{"id": i, "text": text} for i, text in enumerate(sentences)]
     
     messages = [

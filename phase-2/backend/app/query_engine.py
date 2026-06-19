@@ -133,7 +133,8 @@ class CortexQueryEngine:
             "Answer:"
         )
         try:
-            client = get_kimi_client()
+            tenant_id = os.path.basename(self.tenant_dir.rstrip("/\\"))
+            client = get_kimi_client(tenant_id)
             return client.chat_completion(
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,

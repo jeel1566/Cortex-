@@ -96,7 +96,7 @@ def run_ingestion_pipeline(tenant_id: str, raw_messages: List[Dict[str, Any]], b
     classified_types = []
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i+batch_size]
-        classified_types.extend(classify_sentences(batch))
+        classified_types.extend(classify_sentences(batch, tenant_id=tenant_id))
         
     for r, t in zip(sentence_records, classified_types):
         r["type"] = t
@@ -126,8 +126,8 @@ def run_ingestion_pipeline(tenant_id: str, raw_messages: List[Dict[str, Any]], b
         
         while attempts < 3 and not passed:
             attempts += 1
-            page_content = synthesize_page(page_num, cluster, feedback=feedback, temperature=temperature)
-            validation = validate_page(sources, page_content)
+            page_content = synthesize_page(page_num, cluster, feedback=feedback, temperature=temperature, tenant_id=tenant_id)
+            validation = validate_page(sources, page_content, tenant_id=tenant_id)
             passed = validation.get("validation_passed", False)
             
             if not passed:

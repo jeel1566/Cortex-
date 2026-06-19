@@ -37,6 +37,32 @@ def get_tenant_connection(tenant_id: str) -> sqlite3.Connection:
     # Run migrations/init schema
     init_database(conn)
     
+    # Ensure a row for the current tenant exists in the tenants table so foreign keys don't fail
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 FROM tenants WHERE id = ?", (tenant_id,))
+    if not cursor.fetchone():
+        import datetime
+        import json
+        from app.config import TENANTS_DIR
+        tenant_dir = os.path.join(TENANTS_DIR, tenant_id)
+        git_repo_path = os.path.join(tenant_dir, "repo")
+        hnsw_index_path = os.path.join(tenant_dir, "hnsw_index.json")
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO tenants (id, name, created_at, git_repo_path, hnsw_index_path, config)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                tenant_id,
+                tenant_id.replace("_", " ").title(),
+                datetime.datetime.utcnow().isoformat() + "Z",
+                git_repo_path,
+                hnsw_index_path,
+                json.dumps({"ai_provider": "not_configured"})
+            )
+        )
+        conn.commit()
+        
     _connections[tenant_id] = conn
     return conn
 

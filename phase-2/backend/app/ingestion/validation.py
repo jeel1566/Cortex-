@@ -45,7 +45,7 @@ Output format: You MUST return a single JSON object containing exactly these fie
 Return ONLY valid JSON. No conversational text.
 """
 
-def validate_page(sources: List[str], synthesized_page: str) -> Dict[str, Any]:
+def validate_page(sources: List[str], synthesized_page: str, tenant_id: str = None) -> Dict[str, Any]:
     """
     Validates a synthesized page against its raw source sentences using Kimi.
     Returns a dictionary with scores and status.
@@ -59,7 +59,7 @@ def validate_page(sources: List[str], synthesized_page: str) -> Dict[str, Any]:
             "reason": "Missing sources or page content."
         }
         
-    client = get_kimi_client()
+    client = get_kimi_client(tenant_id)
     
     messages = [
         {"role": "system", "content": VALIDATION_PROMPT},

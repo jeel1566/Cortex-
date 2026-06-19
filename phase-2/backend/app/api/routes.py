@@ -406,3 +406,93 @@ def submit_feedback(
         "pages_flagged": request.affected_pages,
         "resynthesis_queued": resynthesis_queued
     }
+
+# ── GET and POST /v1/settings ───────────────────────────────────────────────
+
+class SettingsRequest(BaseModel):
+    ai_provider: str
+    config: Dict[str, Any]
+
+@router.get("/settings")
+def get_settings(
+    agent: dict = Depends(PermissionChecker(min_level=0))
+):
+    tenant_id = agent["tenant_id"]
+    conn = get_tenant_connection(tenant_id)
+    cursor = conn.cursor()
+    cursor.execute("SELECT config FROM tenants WHERE id = ?", (tenant_id,))
+    row = cursor.fetchone()
+    if not row or not row["config"]:
+        return {
+            "ai_provider": "not_configured",
+            "config": {
+                "ollama_endpoint": "http://localhost:11434/v1",
+                "ollama_model": "llama3",
+                "web_api_endpoint": "",
+                "web_api_key": "",
+                "web_api_model": "llama-3.1-8b-instant",
+                "codex_endpoint": "ws://127.0.0.1:4500",
+                "codex_model": ""
+            }
+        }
+    
+    try:
+        tenant_config = json.loads(row["config"])
+    except Exception:
+        tenant_config = {}
+        
+    ai_provider = tenant_config.get("ai_provider", "not_configured")
+    ai_config = tenant_config.get("ai_provider_config", {
+        "ollama_endpoint": "http://localhost:11434/v1",
+        "ollama_model": "llama3",
+        "web_api_endpoint": "",
+        "web_api_key": "",
+        "web_api_model": "llama-3.1-8b-instant",
+        "codex_endpoint": "ws://127.0.0.1:4500",
+        "codex_model": ""
+    })
+    
+    return {
+        "ai_provider": ai_provider,
+        "config": ai_config
+    }
+
+@router.post("/settings")
+def update_settings(
+    request: SettingsRequest,
+    agent: dict = Depends(PermissionChecker(min_level=1))
+):
+    tenant_id = agent["tenant_id"]
+    conn = get_tenant_connection(tenant_id)
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT config FROM tenants WHERE id = ?", (tenant_id,))
+    row = cursor.fetchone()
+    if row and row["config"]:
+        try:
+            tenant_config = json.loads(row["config"])
+        except Exception:
+            tenant_config = {}
+    else:
+        tenant_config = {}
+        
+    tenant_config["ai_provider"] = request.ai_provider
+    tenant_config["ai_provider_config"] = request.config
+    
+    cursor.execute(
+        "UPDATE tenants SET config = ? WHERE id = ?",
+        (json.dumps(tenant_config), tenant_id)
+    )
+    conn.commit()
+    
+    # Clear client cache
+    from app.llm.kimi import _tenant_clients
+    keys_to_del = [k for k in _tenant_clients.keys() if k.startswith(f"{tenant_id}_")]
+    for k in keys_to_del:
+        del _tenant_clients[k]
+        
+    return {
+        "status": "success",
+        "message": "Settings updated successfully",
+        "ai_provider": request.ai_provider
+    }

@@ -211,6 +211,7 @@ async def _execute_prompt_ws(endpoint, prompt, model_name=None):
 
 class CortexLLMClient:
     _PROVIDER_MAP = {
+        "not_configured": "not_configured",
         "ollama":        "local_ai",
         "local_ai":      "local_ai",
         "local":         "local_ai",
@@ -227,11 +228,19 @@ class CortexLLMClient:
         "agent":         "coding_agent",
     }
 
-    def __init__(self, endpoint=None, api_key=None, model_name=None):
-        raw_provider = os.environ.get("LLM_PROVIDER", "web_api").lower().strip()
+    def __init__(self, provider=None, endpoint=None, api_key=None, model_name=None):
+        if provider:
+            raw_provider = provider.lower().strip()
+        else:
+            raw_provider = os.environ.get("LLM_PROVIDER", "web_api").lower().strip()
         self.provider = self._PROVIDER_MAP.get(raw_provider, "web_api")
 
-        if self.provider == "local_ai":
+        if self.provider == "not_configured":
+            self.endpoint   = ""
+            self.api_key    = ""
+            self.model_name = ""
+
+        elif self.provider == "local_ai":
             self.endpoint   = endpoint   or os.environ.get("OLLAMA_ENDPOINT", "http://localhost:11434/v1")
             self.api_key    = api_key    or "ollama"
             self.model_name = (model_name or os.environ.get("OLLAMA_MODEL", "llama3")).strip()
@@ -257,6 +266,11 @@ class CortexLLMClient:
                                          or os.environ.get("WEB_API_MODEL",       "llama-3.1-8b-instant")
             
     def chat_completion(self, messages: List[Dict[str, str]], temperature=0.7, max_tokens=2048, response_format=None) -> str:
+        if self.provider == "not_configured":
+            raise RuntimeError(
+                "AI Provider is not configured. Please open Settings in the sidebar to configure your Ollama, Web API, or Codex settings."
+            )
+
         if self.provider == "codex_cli":
             prompt_parts = []
             for msg in messages:
@@ -311,8 +325,9 @@ class CortexLLMClient:
         
         for attempt in range(max_retries):
             try:
-                provider = os.environ.get("LLM_PROVIDER", "azure").lower()
-                timeout_val = 300 if provider == "ollama" else 60
+                # Use local provider configuration to determine timeouts
+                provider = self.provider
+                timeout_val = 300 if provider == "local_ai" else 60
                 response = requests.post(url, headers=headers, json=payload, timeout=timeout_val)
                 
                 if response.status_code == 429:
@@ -352,14 +367,46 @@ class CortexLLMClient:
                         raise
             except Exception as e:
                 if attempt == max_retries - 1:
-                    raise RuntimeError(f"Kimi API request failed: {e}")
+                    raise RuntimeError(f"API request failed: {e}")
                 wait_time = base_delay * (2 ** attempt)
                 time.sleep(wait_time)
 
 _client = None
+_tenant_clients = {}
 
-def get_kimi_client() -> CortexLLMClient:
-    global _client
+def get_kimi_client(tenant_id: str = None) -> CortexLLMClient:
+    global _client, _tenant_clients
+    if tenant_id:
+        try:
+            from app.database.connection import get_tenant_connection
+            conn = get_tenant_connection(tenant_id)
+            cursor = conn.cursor()
+            cursor.execute("SELECT config FROM tenants WHERE id = ?", (tenant_id,))
+            row = cursor.fetchone()
+            if row and row["config"]:
+                config = json.loads(row["config"])
+                provider = config.get("ai_provider", "not_configured")
+                ai_config = config.get("ai_provider_config", {})
+                
+                kwargs = {}
+                if provider == "ollama":
+                    kwargs["endpoint"] = ai_config.get("ollama_endpoint")
+                    kwargs["model_name"] = ai_config.get("ollama_model")
+                elif provider == "web_api":
+                    kwargs["endpoint"] = ai_config.get("web_api_endpoint")
+                    kwargs["api_key"] = ai_config.get("web_api_key")
+                    kwargs["model_name"] = ai_config.get("web_api_model")
+                elif provider == "codex":
+                    kwargs["endpoint"] = ai_config.get("codex_endpoint")
+                    kwargs["model_name"] = ai_config.get("codex_model")
+                
+                cache_key = f"{tenant_id}_{provider}_{kwargs.get('endpoint')}_{kwargs.get('model_name')}"
+                if cache_key not in _tenant_clients:
+                    _tenant_clients[cache_key] = CortexLLMClient(provider=provider, **kwargs)
+                return _tenant_clients[cache_key]
+        except Exception as e:
+            print(f"Error fetching tenant LLM config: {e}")
+
     if _client is None:
         _client = CortexLLMClient()
     return _client

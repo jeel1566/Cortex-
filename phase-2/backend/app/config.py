@@ -24,7 +24,7 @@ def load_env():
 load_env()
 
 # LLM & Codex Settings
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "codex_cli")
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "not_configured")
 AGENT_ENDPOINT = os.environ.get("AGENT_ENDPOINT", "ws://127.0.0.1:4500")
 AGENT_MODEL = os.environ.get("AGENT_MODEL", "gpt-4o")
 
