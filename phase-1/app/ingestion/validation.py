@@ -68,20 +68,31 @@ def validate_page(sources: List[str], synthesized_page: str) -> Dict[str, Any]:
         {"role": "user", "content": f"Sources:\n{json.dumps(sources)}\n\nSynthesized Page:\n{synthesized_page}"}
     ]
     
+    raw_response = None
+    clean_text = None
     try:
-        raw_response = client.chat_completion(messages, temperature=0.1)
+        raw_response = client.chat_completion(messages, temperature=0.1, max_tokens=512)
         
-        # Clean JSON wrappers
+        # Clean JSON wrappers and extract JSON content
         clean_text = raw_response.strip()
         if "```json" in clean_text:
             clean_text = clean_text.split("```json")[1].split("```")[0].strip()
         elif "```" in clean_text:
             clean_text = clean_text.split("```")[1].split("```")[0].strip()
+        else:
+            # For validation, we expect a JSON object. Find the main object block.
+            start_idx = clean_text.find('{')
+            if start_idx != -1:
+                end_idx = clean_text.rfind('}')
+                if end_idx != -1 and start_idx < end_idx:
+                    clean_text = clean_text[start_idx:end_idx+1]
             
         data = json.loads(clean_text)
         return data
     except Exception as e:
         print(f"Validation API error: {e}")
+        print(f"[DEBUG] raw_response:\n{raw_response}")
+        print(f"[DEBUG] clean_text:\n{clean_text}")
         # Default safety fallback (fails validation so page goes to draft)
         return {
             "proposition_coverage": 0.5,

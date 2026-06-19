@@ -52,6 +52,8 @@ def classify_sentences(sentences: List[str]) -> List[str]:
         {"role": "user", "content": json.dumps(input_data)}
     ]
     
+    raw_response = None
+    clean_text = None
     try:
         # Call Kimi client
         raw_response = client.chat_completion(messages, temperature=0.1)
@@ -61,6 +63,13 @@ def classify_sentences(sentences: List[str]) -> List[str]:
             clean_text = clean_text.split("```json")[1].split("```")[0].strip()
         elif "```" in clean_text:
             clean_text = clean_text.split("```")[1].split("```")[0].strip()
+        else:
+            # For classifier, we expect a JSON array. Find the last array block.
+            start_idx = clean_text.rfind('[')
+            if start_idx != -1:
+                end_idx = clean_text.find(']', start_idx)
+                if end_idx != -1:
+                    clean_text = clean_text[start_idx:end_idx+1]
             
         data = json.loads(clean_text)
         
@@ -78,6 +87,8 @@ def classify_sentences(sentences: List[str]) -> List[str]:
         
     except Exception as e:
         print(f"Classifier error: {e}. Falling back to default 'PRESCRIPTION' classification.")
+        print(f"[DEBUG] raw_response:\n{raw_response}")
+        print(f"[DEBUG] clean_text:\n{clean_text}")
         # Fallback in case of API failure or JSON parse issues
         return ["PRESCRIPTION" for _ in sentences]
 

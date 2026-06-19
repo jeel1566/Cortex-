@@ -217,7 +217,10 @@ async def _execute_prompt_ws(endpoint, prompt, model_name=None):
                 }
             }
         }))
-        await ws.recv()
+        while True:
+            resp_str = await ws.recv()
+            if json.loads(resp_str).get("id") == 1:
+                break
         
         # 2. Start Thread
         start_params = {
@@ -234,8 +237,14 @@ async def _execute_prompt_ws(endpoint, prompt, model_name=None):
             "id": 2,
             "params": start_params
         }))
-        thread_data = json.loads(await ws.recv())
-        thread_id = thread_data.get("result", {}).get("thread", {}).get("id")
+        
+        thread_id = None
+        while True:
+            resp_str = await ws.recv()
+            thread_data = json.loads(resp_str)
+            if thread_data.get("id") == 2:
+                thread_id = thread_data.get("result", {}).get("thread", {}).get("id")
+                break
         if not thread_id:
             raise RuntimeError("Failed to obtain thread ID from Codex App Server.")
             
@@ -270,6 +279,11 @@ async def _execute_prompt_ws(endpoint, prompt, model_name=None):
                 status_type = data.get("params", {}).get("status", {}).get("type")
                 if status_type == "idle":
                     break
+                elif status_type == "systemError":
+                    raise RuntimeError("Codex thread entered systemError status.")
+            elif method == "error":
+                error_msg = data.get("params", {}).get("error", {}).get("message", "Unknown Codex error")
+                raise RuntimeError(f"Codex server error: {error_msg}")
         
         if response_text is None:
             raise RuntimeError("Codex App Server completed without producing an agentMessage.")
@@ -284,8 +298,12 @@ class CortexLLMClient:
         web_api      | Any OpenAI-compatible web API (Groq, Azure, OpenAI, etc.)
         coding_agent | Coding agent endpoints (Codex, GitHub Copilot,
                      | Antigravity, etc.)
+        openai       | Standard OpenAI API
+        deepseek     | Direct DeepSeek API
+        anthropic    | Direct Anthropic API
+        azure        | Direct Azure OpenAI API
 
-    Backward-compatible aliases: "ollama" → local_ai, "azure" → web_api.
+    Backward-compatible aliases: "ollama" → local_ai, "azure" → web_api (if legacy).
     """
 
     # Map legacy and canonical provider names → canonical key
@@ -293,10 +311,12 @@ class CortexLLMClient:
         "ollama":        "local_ai",
         "local_ai":      "local_ai",
         "local":         "local_ai",
-        "azure":         "web_api",
+        "azure":         "azure",
         "web_api":       "web_api",
         "web":           "web_api",
-        "openai":        "web_api",
+        "openai":        "openai",
+        "deepseek":      "deepseek",
+        "anthropic":     "anthropic",
         "groq":          "web_api",
         "coding_agent":  "coding_agent",
         "codex":         "codex_cli",
@@ -306,14 +326,15 @@ class CortexLLMClient:
         "agent":         "coding_agent",
     }
 
-    def __init__(self, endpoint=None, api_key=None, model_name=None):
-        raw_provider = os.environ.get("LLM_PROVIDER", "web_api").lower().strip()
+    def __init__(self, endpoint=None, api_key=None, model_name=None, provider=None, model=None):
+        raw_provider = (provider or os.environ.get("LLM_PROVIDER", "web_api")).lower().strip()
         self.provider = self._PROVIDER_MAP.get(raw_provider, "web_api")
+        model_val = model_name or model
 
         if self.provider == "local_ai":
             self.endpoint   = endpoint   or os.environ.get("OLLAMA_ENDPOINT", "http://localhost:11434/v1")
             self.api_key    = api_key    or "ollama"
-            self.model_name = (model_name or os.environ.get("OLLAMA_MODEL", "llama3")).strip()
+            self.model_name = (model_val or os.environ.get("OLLAMA_MODEL", "llama3")).strip()
             ensure_ollama_running(self.model_name)
 
         elif self.provider == "coding_agent":
@@ -321,25 +342,57 @@ class CortexLLMClient:
             # Point AGENT_ENDPOINT to whatever port the agent listens on.
             self.endpoint   = endpoint   or os.environ.get("AGENT_ENDPOINT", "http://localhost:11435/v1")
             self.api_key    = api_key    or os.environ.get("AGENT_API_KEY", "agent")
-            self.model_name = model_name or os.environ.get("AGENT_MODEL", "gpt-4o")
+            self.model_name = model_val or os.environ.get("AGENT_MODEL", "gpt-4o")
             print(f"[CortexLLM] Using Coding Agent provider -> {self.model_name} @ {self.endpoint}")
 
         elif self.provider == "codex_cli":
             self.endpoint   = endpoint   or os.environ.get("AGENT_ENDPOINT", "ws://127.0.0.1:4500")
             self.api_key    = api_key    or os.environ.get("AGENT_API_KEY", "cli")
-            self.model_name = model_name or os.environ.get("AGENT_MODEL") or os.environ.get("CODEX_MODEL") or ""
+            self.model_name = model_val or os.environ.get("AGENT_MODEL") or os.environ.get("CODEX_MODEL") or ""
             ensure_codex_server_running(self.endpoint)
             print(f"[CortexLLM] Using Codex CLI provider -> {self.model_name or 'default'} @ {self.endpoint}")
 
+        elif self.provider == "openai":
+            self.endpoint   = endpoint   or os.environ.get("LLM_ENDPOINT", "https://api.openai.com/v1")
+            self.api_key    = api_key    or os.environ.get("LLM_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
+            self.model_name = model_val or os.environ.get("LLM_MODEL", "gpt-4o")
+
+        elif self.provider == "deepseek":
+            self.endpoint   = endpoint   or os.environ.get("LLM_ENDPOINT", "https://api.deepseek.com/v1")
+            self.api_key    = api_key    or os.environ.get("LLM_API_KEY", "") or os.environ.get("DEEPSEEK_API_KEY", "")
+            self.model_name = model_val or os.environ.get("LLM_MODEL", "deepseek-chat")
+
+        elif self.provider == "anthropic":
+            self.endpoint   = endpoint   or os.environ.get("LLM_ENDPOINT", "https://api.anthropic.com/v1/messages")
+            self.api_key    = api_key    or os.environ.get("LLM_API_KEY", "") or os.environ.get("ANTHROPIC_API_KEY", "")
+            self.model_name = model_val or os.environ.get("LLM_MODEL", "claude-3-5-sonnet-20240620")
+
+        elif self.provider == "azure":
+            self.endpoint   = endpoint   or os.environ.get("AZURE_ENDPOINT", "") or os.environ.get("LLM_ENDPOINT", "")
+            self.api_key    = api_key    or os.environ.get("AZURE_API_KEY", "") or os.environ.get("LLM_API_KEY", "")
+            self.model_name = model_val or os.environ.get("AZURE_MODEL_NAME", "kimi-k2.5")
+
         else:  # web_api
             self.endpoint   = endpoint   or os.environ.get("AZURE_ENDPOINT",      "") \
-                                         or os.environ.get("WEB_API_ENDPOINT",    "")
+                                         or os.environ.get("WEB_API_ENDPOINT",    "") \
+                                         or os.environ.get("LLM_ENDPOINT",         "")
             self.api_key    = api_key    or os.environ.get("AZURE_API_KEY",        "") \
-                                         or os.environ.get("WEB_API_KEY",         "")
+                                         or os.environ.get("WEB_API_KEY",         "") \
+                                         or os.environ.get("LLM_API_KEY",          "")
             self.model_name = model_name or os.environ.get("AZURE_MODEL_NAME",    "") \
                                          or os.environ.get("WEB_API_MODEL",       "llama-3.1-8b-instant")
             
     def chat_completion(self, messages: List[Dict[str, str]], temperature=0.7, max_tokens=2048, response_format=None) -> str:
+        # Dynamic hybrid model routing for Groq endpoint
+        current_model = self.model_name
+        if self.provider == "web_api" and self.endpoint and "groq.com" in self.endpoint.lower():
+            total_chars = sum(len(m.get("content", "")) for m in messages)
+            estimated_tokens = total_chars // 4
+            if estimated_tokens > 4500:
+                current_model = "meta-llama/llama-4-scout-17b-16e-instruct"
+            else:
+                current_model = "llama-3.1-8b-instant"
+                
         if self.provider == "codex_cli":
             # Convert messages to a formatted prompt string
             prompt_parts = []
@@ -364,44 +417,79 @@ class CortexLLMClient:
 
         if not self.endpoint:
             raise ValueError("LLM endpoint must be set.")
+
+        from urllib.parse import urlparse
             
-        # Parse endpoint to cleanly build the chat completions URL (handling query params)
-        parsed = urlparse(self.endpoint)
-        path = parsed.path
-        if path.endswith("/chat/completions"):
-            path = path[:-17]
-        path = path.rstrip("/") + "/chat/completions"
-        
-        scheme = parsed.scheme or "https"
-        netloc = parsed.netloc
-        url = f"{scheme}://{netloc}{path}"
-        if parsed.query:
-            url += f"?{parsed.query}"
-        print(f"[DEBUG] self.endpoint: '{self.endpoint}'")
-        print(f"[DEBUG] constructed url: '{url}'")
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}"
-        }
-        
-        payload = {
-            "model": self.model_name,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens
-        }
-        if response_format:
-            payload["response_format"] = response_format
+        if self.provider == "anthropic":
+            headers = {
+                "x-api-key": self.api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json"
+            }
+            # Translate messages for Anthropic (extract system prompt, map roles)
+            system_prompt = None
+            anthropic_messages = []
+            for msg in messages:
+                role = msg.get("role")
+                content = msg.get("content")
+                if role == "system":
+                    system_prompt = content
+                else:
+                    role_mapped = "user" if role == "user" else "assistant"
+                    anthropic_messages.append({"role": role_mapped, "content": content})
+                    
+            payload = {
+                "model": current_model,
+                "messages": anthropic_messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature
+            }
+            if system_prompt:
+                payload["system"] = system_prompt
+                
+            url = self.endpoint
+        else:
+            # Parse endpoint to cleanly build the chat completions URL (handling query params)
+            parsed = urlparse(self.endpoint)
+            path = parsed.path
+            if path.endswith("/chat/completions"):
+                path = path[:-17]
+            path = path.rstrip("/") + "/chat/completions"
             
-        print(f"[CortexLLM] provider={self.provider} model={self.model_name}")
+            scheme = parsed.scheme or "https"
+            netloc = parsed.netloc
+            url = f"{scheme}://{netloc}{path}"
+            if parsed.query:
+                url += f"?{parsed.query}"
+            print(f"[DEBUG] self.endpoint: '{self.endpoint}'")
+            print(f"[DEBUG] constructed url: '{url}'")
+
+            headers = {
+                "Content-Type": "application/json"
+            }
+            if self.provider == "azure":
+                headers["api-key"] = self.api_key
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            else:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            
+            payload = {
+                "model": current_model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            }
+            if response_format:
+                payload["response_format"] = response_format
+            
+        print(f"[CortexLLM] provider={self.provider} model={current_model}")
         max_retries = 5
         base_delay = 2.0
         response = None
         
         for attempt in range(max_retries):
             try:
-                provider = os.environ.get("LLM_PROVIDER", "azure").lower()
-                timeout_val = 300 if provider == "ollama" else 60
+                timeout_val = 300 if self.provider == "local_ai" else 60
                 response = requests.post(url, headers=headers, json=payload, timeout=timeout_val)
                 
                 # Check for 429 rate limit
@@ -434,7 +522,10 @@ class CortexLLMClient:
                 
                 response.raise_for_status()
                 data = response.json()
-                return data['choices'][0]['message']['content']
+                if self.provider == "anthropic":
+                    return data['content'][0]['text']
+                else:
+                    return data['choices'][0]['message']['content']
             except requests.exceptions.HTTPError as he:
                 if response is not None and response.status_code == 429:
                     pass
@@ -451,6 +542,11 @@ class CortexLLMClient:
                 wait_time = base_delay * (2 ** attempt)
                 print(f"[WARNING] API request failed with error: {e}. Retrying in {wait_time:.2f}s...")
                 time.sleep(wait_time)
+        
+        # If the loop finishes without returning, it means all attempts failed (usually with 429 status)
+        if response is not None and response.status_code == 429:
+            raise RuntimeError(f"Kimi API request failed with 429 Rate Limit after {max_retries} attempts.")
+        raise RuntimeError(f"Kimi API request failed after {max_retries} attempts.")
 
 # ── Backward-compat alias ──────────────────────────────────────────────────────
 # KimiClient is kept as an alias so existing code continues to work unchanged.

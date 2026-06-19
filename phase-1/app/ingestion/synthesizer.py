@@ -41,10 +41,14 @@ sources:
 [A synthesized, clear explanation of the policy, decision, or procedure. Use Markdown formatting like lists or headers where appropriate.]
 Every factual claim you write MUST be backed by a source. You MUST append a citation superscript (e.g. [^1]) to the end of sentences that represent claims, mapped to the index of the source in the YAML sources list.
 
+At the very bottom of the document body, you MUST include standard Markdown footnote definitions mapping each superscript back to its source ID. For example:
+[^1]: slack://C123/1593710973
+[^2]: slack://C123/1593710984
+
 DO NOT output any extra explanation. Start directly with the opening '---' of the YAML block.
 """
 
-def synthesize_page(page_index: int, cluster: List[Dict[str, Any]]) -> str:
+def synthesize_page(page_index: int, cluster: List[Dict[str, Any]], feedback: str = None, temperature: float = 0.3) -> str:
     """
     Synthesizes a markdown page from a cluster of classified sentences.
     page_index is an integer used to generate a unique page ID.
@@ -69,10 +73,15 @@ def synthesize_page(page_index: int, cluster: List[Dict[str, Any]]) -> str:
         {"role": "system", "content": SYNTHESIZER_PROMPT},
         {"role": "user", "content": f"Page Index: {page_index}\nSource Data:\n" + json.dumps(input_data)}
     ]
-    
+    if feedback:
+        messages.append({
+            "role": "user",
+            "content": f"Based on validation of your previous synthesis attempt, please apply the following corrections:\n{feedback}"
+        })
+        
     try:
         # Call Kimi client
-        page_content = client.chat_completion(messages, temperature=0.3)
+        page_content = client.chat_completion(messages, temperature=temperature, max_tokens=1024)
         return page_content.strip()
     except Exception as e:
         print(f"Synthesizer error: {e}")
@@ -100,6 +109,11 @@ The following points were discussed:
 """
         for i, item in enumerate(cluster):
             fallback_content += f"- {item['text']} [^{i+1}]\n"
+            
+        # Add fallback footnote definitions
+        fallback_content += "\n"
+        for i, src in enumerate(sources_list):
+            fallback_content += f"[^{i+1}]: {src}\n"
             
         return fallback_content
 
