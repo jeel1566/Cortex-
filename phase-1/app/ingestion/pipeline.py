@@ -228,7 +228,9 @@ def run_ingestion_pipeline(csv_path: str, max_messages: int = 200, max_clusters:
             
         # Save to cache
         try:
-            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            cache_dir = os.path.dirname(cache_path)
+            if cache_dir:
+                os.makedirs(cache_dir, exist_ok=True)
             with open(cache_path, "w", encoding="utf-8") as f:
                 json.dump(sentence_records, f, indent=2)
             print(f"  Saved {len(sentence_records)} classified sentences to cache: {cache_path}")
