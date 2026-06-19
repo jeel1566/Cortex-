@@ -121,12 +121,39 @@ def run_ingestion_pipeline(tenant_id: str, raw_messages: List[Dict[str, Any]], b
         page_content = ""
         validation = {}
         passed = False
+        feedback = None
+        temperature = 0.3
         
         while attempts < 3 and not passed:
             attempts += 1
-            page_content = synthesize_page(page_num, cluster)
+            page_content = synthesize_page(page_num, cluster, feedback=feedback, temperature=temperature)
             validation = validate_page(sources, page_content)
             passed = validation.get("validation_passed", False)
+            
+            if not passed:
+                cov = validation.get("proposition_coverage", 1.0)
+                hal = validation.get("hallucination_rate", 0.0)
+                comp = validation.get("completeness_score", 10)
+                
+                feedback_parts = []
+                if cov < 0.90:
+                    feedback_parts.append(
+                        f"CRITICAL: Proposition coverage was too low ({cov:.2f}). "
+                        "You must explicitly include and document all source claims on this page."
+                    )
+                if hal > 0.02:
+                    feedback_parts.append(
+                        f"CRITICAL: Hallucination rate was too high ({hal:.2f}). "
+                        "Strictly limit claims to the facts in the source logs. Do not extrapolate."
+                    )
+                if comp < 7:
+                    feedback_parts.append(
+                        f"CRITICAL: Completeness score was too low ({comp}/10). "
+                        "Ensure the page is a cohesive, fully detailed, and comprehensive answer to the topic."
+                    )
+                    temperature = 0.2
+                    
+                feedback = "\n".join(feedback_parts)
             
         status = "APPROVED" if passed else "DRAFT"
         
