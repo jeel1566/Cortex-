@@ -1,90 +1,134 @@
-# Cortex Knowledge OS — Codex CLI Integration
+# Cortex Knowledge OS
 
-Cortex is a corporate Knowledge OS designed to ingest unstructured company logs, classify them, cluster them into decision units, and synthesize canonical markdown knowledge pages. 
+Cortex is an enterprise-grade corporate Knowledge OS designed to ingest unstructured company communications (such as Slack logs and Notion pages), filter and redact PII, classify speech acts, cluster them into decision units, and synthesize version-controlled, canonical markdown knowledge pages. 
 
-This repository implements the integration of **OpenAI Codex CLI** as a local AI LLM provider.
+The repository contains two key development phases:
+1. **[Phase 1](file:///D:/Cortex/phase-1)**: Single-tenant command-line ingestion compiler and RAG benchmark evaluation suite (configured for local Ollama and Codex server setups).
+2. **[Phase 2](file:///D:/Cortex/phase-2)**: Secure, production-ready multi-tenant Knowledge OS featuring physical isolation, Git-backed versioning, Clerk JWT authentication, background ingestion queues, a Notion sync connector, and a beautiful Next.js admin frontend.
 
 ---
 
-## 🚀 Speed Optimization: Why WebSocket is 10x Faster
+## 🏗️ Repository Architecture
 
-Originally, executing completions via a CLI subprocess (`codex exec`) caused a massive **15–20 second cold-start delay** per request. This delay was due to the CLI initializing, loading local rules/skills, and establishing connections from scratch.
+Cortex is organized cleanly into modular folders:
 
-By launching a single background **Codex App Server** instance and connecting to it via **JSON-RPC over WebSockets**, completions now run **nearly instantaneously (under 1 second)** by keeping the session and model connection warm.
-
-```mermaid
-sequenceDiagram
-    participant App as Cortex Ingestion/Query
-    participant Client as kimi.py (WebSocket Client)
-    participant Server as Codex App Server (ws://127.0.0.1:4500)
-    
-    rect rgb(20, 20, 30)
-    note right of App: Initialization Phase
-    App->>Client: get_kimi_client()
-    Client->>Client: check if port 4500 is listening
-    alt Port Closed
-        Client->>Server: Start daemon: codex app-server
-        Client->>Client: poll port 4500 until ready
-    end
-    Client->>Server: initialize (JSON-RPC)
-    Server-->>Client: useragent & home path
-    end
-
-    rect rgb(30, 20, 20)
-    note right of App: Request Phase
-    App->>Client: chat_completion(messages)
-    Client->>Server: thread/start
-    Server-->>Client: threadId
-    Client->>Server: turn/start (threadId, prompt)
-    loop Event Streams
-        Server-->>Client: item/agentMessage/delta (streaming response)
-        Server-->>Client: item/completed (agentMessage)
-    end
-    Client-->>App: Completed Response Text
-    end
+```text
+Cortex/
+├── phase-1/                     # Single-tenant RAG benchmark pipeline
+│   ├── app/                     # Local LLM client, vector index, and search engine
+│   ├── data/                    # Portable csv datasets (messages.csv, users.csv)
+│   ├── eval/                    # Ground truth queries and baseline reports
+│   └── tests/                   # Ingestion and synthesis unit tests
+│
+├── phase-2/                     # Production-ready multi-tenant portal
+│   ├── backend/                 # FastAPI service with tenant isolated SQLite/Git
+│   └── frontend/                # Next.js 14 corporate admin workspace
+│
+├── docs/                        # Specifications and design plans
+│   ├── markdown/                # PRD, TRD, UI/UX, and onboarding documents
+│   └── provider.md              # Codex CLI websocket interface specifications
+│
+├── README.md                    # This overview guide
+├── LLM_SETUP_GUIDE.md           # Local Ollama & Codex manual setup instructions
+└── walkthrough.md               # Quickstart checklist for Ollama setup
 ```
 
 ---
 
-## 🛠️ Configuration & Setup
+## 🚀 Key Features
 
-Cortex reads its provider modes from environment variables. Set up the local `.env` files with the following options:
-
-### Environment Variables (`.env`)
-```env
-# Enable Codex CLI provider mode
-LLM_PROVIDER=codex_cli
-
-# WebSocket endpoint of the Codex App Server (default: ws://127.0.0.1:4500)
-AGENT_ENDPOINT=ws://127.0.0.1:4500
-
-# Specify model override for Codex (e.g. gpt-4o, o3, etc.)
-AGENT_MODEL=gpt-4o
-```
+* **Multi-Tenant Physical Isolation**: Completely isolates SQLite databases (`metadata.db`), Git repositories (under `repo/`), and vector indices (`vector_index.json`) for each tenant.
+* **Onboarding & Configuration Gates**: Intercepts unconfigured or first-time tenants with a modern **Onboarding Setup Wizard** to configure their LLM provider (Ollama, Web API, or Codex) dynamically before accessing the app.
+* **Sleek Admin Portal**: Interactive Next.js 14 interface featuring an **Admin Approval Inbox** to review page drafts and a **Knowledge Explorer** for page searching, markdown reading, and clearance auditing.
+* **Git-backed Audit Trail**: Programmatic commits made via `GitPython` tracking every ingestion run, modification, or feedback-triggered re-synthesis with full history regression.
+* **Clerk JWT Authentication**: Security framework validating bearer tokens and mapping claims to L0-L5 authority levels. Includes a mock pass-through mode for developer speed.
+* **Ingestion Worker & Connectors**: Asynchronous background queue executing tasks (Immediate, Standard, Background) and polling active Notion integrations every 5 minutes.
 
 ---
 
-## 💻 Manual Execution Commands
+## 🛠️ Setup & Quickstart
 
-You can run the ingestion pipeline and evaluate Cortex on your own terminal using these commands:
+Before starting, configure a local LLM or API keys. Read the [LLM Setup Guide](file:///D:/Cortex/LLM_SETUP_GUIDE.md) and [Walkthrough Guide](file:///D:/Cortex/walkthrough.md) for details on installing Ollama or the Codex App Server.
 
-### 1. Ingest Slack Data
-Processes raw slack logs, redacts PII, clusters sentences, and compiles synthesised markdown pages:
-```powershell
-python phase-1/ingest_slack.py
-```
-
-### 2. Run Cortex Evaluation
-Benchmarks Cortex against 50 ground-truth questions and saves output metrics to `phase-1/eval/cortex_v1.json`:
-```powershell
-python phase-1/run_cortex_eval.py
-```
+### Phase 1: Local Ingestion & Evaluation Benchmark
+1. Navigate to the Phase 1 folder:
+   ```bash
+   cd phase-1
+   ```
+2. Create and activate a virtual environment:
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: .\venv\Scripts\activate
+   ```
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+4. Run the Slack ingestion pipeline:
+   ```bash
+   python ingest_slack.py
+   ```
+5. Run the evaluation suite:
+   ```bash
+   python run_cortex_eval.py
+   ```
 
 ---
 
-## ⚙️ Architecture & Implementation Details
+### Phase 2: Multi-Tenant Platform
 
-- **Automatic Server Startup**: The `ensure_codex_server_running` helper parses the configured `AGENT_ENDPOINT`, checks if the port is active, and automatically spawns the background server (`codex app-server --listen ws://127.0.0.1:4500`) if it isn't running.
-- **Windows Command Compatibility**: Spawns the NPM wrapper script using `shell=True` on Windows systems to bypass standard process-path search issues.
-- **Thread Safety**: Runs asynchronous WebSocket communication on a separate background worker thread using `asyncio.run()`, ensuring it never collides with any running FastAPI or async CLI loops.
-- **Clean Completion Parsing**: Listens for the `item/completed` JSON-RPC notifications and filters by `type: "agentMessage"` to retrieve the final completion text cleanly without console logging or prompt headers.
+#### 1. Configure Environments
+Create a `.env` file in `phase-2/backend/` and `phase-2/frontend/.env.local` to toggle authorization keys.
+* For local dev mode, you can leave Clerk keys blank. The systems will fall back to safe pass-through mock authentications (representing tenant_a L5 admin).
+* Default LLM settings on backend startup default to `not_configured`, letting you choose your model provider dynamically during onboarding.
+
+#### 2. Start the FastAPI Backend
+1. Navigate to the backend directory:
+   ```bash
+   cd phase-2/backend
+   pip install -r requirements.txt
+   ```
+2. Run the server:
+   ```bash
+   python run_backend.py
+   ```
+   * The API starts at `http://localhost:8000`.
+   * Swagger docs: `http://localhost:8000/docs`.
+   * Prometheus metrics: `http://localhost:8000/metrics`.
+
+#### 3. Start the Next.js Frontend
+1. Navigate to the frontend directory:
+   ```bash
+   cd phase-2/frontend
+   npm install
+   ```
+2. Start the development server:
+   ```bash
+   npm run dev
+   ```
+3. Open `http://localhost:3000` in your web browser. Login or click Sign In (in mock mode), select your LLM provider in the onboarding wizard, and enjoy!
+
+---
+
+## 🧪 Testing
+
+Both development phases contain complete unit and integration test suites.
+
+* **Phase 1 Ingestion Tests**:
+  ```bash
+  cd phase-1
+  python -m unittest discover -s tests
+  ```
+* **Phase 2 Tenant Isolation & Ingestion Pipeline Tests**:
+  ```bash
+  cd phase-2/backend
+  python -m unittest discover -s tests
+  ```
+
+---
+
+## 📖 In-Depth Specifications & Architectural Guides
+* **Onboarding & Switcher Design**: [10-cortex-onboarding-and-settings.md](file:///D:/Cortex/docs/markdown/10-cortex-onboarding-and-settings.md)
+* **Core Product Requirement Document (PRD)**: [01-cortex-prd.md](file:///D:/Cortex/docs/markdown/01-cortex-prd.md)
+* **Technical Requirement Document (TRD)**: [02-cortex-trd.md](file:///D:/Cortex/docs/markdown/02-cortex-trd.md)
+* **System Architecture Overview**: [07-cortex-architecture.md](file:///D:/Cortex/docs/markdown/07-cortex-architecture.md)
