@@ -1,0 +1,12 @@
+[
+  {
+    "text": "Refunds are 30 days.",
+    "metadata": {
+      "user": "U1",
+      "channel": "C1",
+      "timestamp": "2026-06-16",
+      "source_id": "slack://1"
+    },
+    "type": "PRESCRIPTION"
+  }
+]

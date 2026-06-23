@@ -412,6 +412,7 @@ def submit_feedback(
 class SettingsRequest(BaseModel):
     ai_provider: str
     config: Dict[str, Any]
+    connectors: Optional[Dict[str, Any]] = None
 
 @router.get("/settings")
 def get_settings(
@@ -422,17 +423,35 @@ def get_settings(
     cursor = conn.cursor()
     cursor.execute("SELECT config FROM tenants WHERE id = ?", (tenant_id,))
     row = cursor.fetchone()
+    
+    default_ai_config = {
+        "ollama_endpoint": "http://localhost:11434/v1",
+        "ollama_model": "llama3",
+        "web_api_endpoint": "",
+        "web_api_key": "",
+        "web_api_model": "llama-3.1-8b-instant",
+        "codex_endpoint": "ws://127.0.0.1:4500",
+        "codex_model": ""
+    }
+    default_notion_config = {
+        "enabled": False,
+        "database_id": "",
+        "api_key": "",
+        "last_polled": ""
+    }
+    default_slack_config = {
+        "enabled": False,
+        "token": "",
+        "channel": ""
+    }
+    
     if not row or not row["config"]:
         return {
             "ai_provider": "not_configured",
-            "config": {
-                "ollama_endpoint": "http://localhost:11434/v1",
-                "ollama_model": "llama3",
-                "web_api_endpoint": "",
-                "web_api_key": "",
-                "web_api_model": "llama-3.1-8b-instant",
-                "codex_endpoint": "ws://127.0.0.1:4500",
-                "codex_model": ""
+            "config": default_ai_config,
+            "connectors": {
+                "notion": default_notion_config,
+                "slack": default_slack_config
             }
         }
     
@@ -442,19 +461,37 @@ def get_settings(
         tenant_config = {}
         
     ai_provider = tenant_config.get("ai_provider", "not_configured")
-    ai_config = tenant_config.get("ai_provider_config", {
-        "ollama_endpoint": "http://localhost:11434/v1",
-        "ollama_model": "llama3",
-        "web_api_endpoint": "",
-        "web_api_key": "",
-        "web_api_model": "llama-3.1-8b-instant",
-        "codex_endpoint": "ws://127.0.0.1:4500",
-        "codex_model": ""
-    })
+    ai_config = tenant_config.get("ai_provider_config", default_ai_config.copy())
     
+    # Mask AI key
+    if ai_config.get("web_api_key"):
+        ai_config["web_api_key"] = "********"
+        
+    # Get connectors
+    notion_config = tenant_config.get("notion", default_notion_config.copy())
+    slack_config = tenant_config.get("slack", default_slack_config.copy())
+    
+    # Ensure all keys exist
+    for k, v in default_notion_config.items():
+        if k not in notion_config:
+            notion_config[k] = v
+    for k, v in default_slack_config.items():
+        if k not in slack_config:
+            slack_config[k] = v
+            
+    # Mask connector keys
+    if notion_config.get("api_key"):
+        notion_config["api_key"] = "********"
+    if slack_config.get("token"):
+        slack_config["token"] = "********"
+        
     return {
         "ai_provider": ai_provider,
-        "config": ai_config
+        "config": ai_config,
+        "connectors": {
+            "notion": notion_config,
+            "slack": slack_config
+        }
     }
 
 @router.post("/settings")
@@ -476,9 +513,37 @@ def update_settings(
     else:
         tenant_config = {}
         
-    tenant_config["ai_provider"] = request.ai_provider
-    tenant_config["ai_provider_config"] = request.config
+    # AI Provider update
+    old_ai_config = tenant_config.get("ai_provider_config", {})
+    new_ai_config = request.config
     
+    # Handle key masking
+    if new_ai_config.get("web_api_key") == "********":
+        new_ai_config["web_api_key"] = old_ai_config.get("web_api_key", "")
+        
+    tenant_config["ai_provider"] = request.ai_provider
+    tenant_config["ai_provider_config"] = new_ai_config
+    
+    # Connectors update
+    if request.connectors:
+        # Notion
+        new_notion = request.connectors.get("notion", {})
+        old_notion = tenant_config.get("notion", {})
+        if new_notion:
+            if new_notion.get("api_key") == "********":
+                new_notion["api_key"] = old_notion.get("api_key", "")
+            if "last_polled" not in new_notion or not new_notion["last_polled"]:
+                new_notion["last_polled"] = old_notion.get("last_polled", "2026-06-01T00:00:00Z")
+            tenant_config["notion"] = new_notion
+            
+        # Slack
+        new_slack = request.connectors.get("slack", {})
+        old_slack = tenant_config.get("slack", {})
+        if new_slack:
+            if new_slack.get("token") == "********":
+                new_slack["token"] = old_slack.get("token", "")
+            tenant_config["slack"] = new_slack
+            
     cursor.execute(
         "UPDATE tenants SET config = ? WHERE id = ?",
         (json.dumps(tenant_config), tenant_id)

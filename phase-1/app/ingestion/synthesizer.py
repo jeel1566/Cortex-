@@ -2,7 +2,7 @@ import os
 import sys
 import json
 import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # Add parent directories to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -12,6 +12,17 @@ from app.llm.kimi import get_kimi_client
 SYNTHESIZER_PROMPT = """
 You are an expert technical writer and knowledge engineer.
 Your task is to take a cluster of sentences extracted from company Slack logs and synthesize them into a single, cohesive, canonical knowledge page in Markdown format with a YAML frontmatter header.
+
+CRITICAL PRESERVATION RULES — You MUST follow these:
+1. PRESERVE all specific numbers: PR numbers (#1234), version numbers, port numbers, timeout values, worker counts, and any numeric configuration.
+2. PRESERVE all URLs and links exactly as they appear.
+3. PRESERVE all biographical details: years of experience, previous companies, job titles, locations, career timelines.
+4. PRESERVE all technology names: databases, languages, frameworks, cloud providers.
+5. PRESERVE all command-line flags, error codes, and tracebacks.
+6. PRESERVE all user names and aliases. If a user introduces themselves with a name different from their display name, note BOTH names.
+7. When a user says "I" or "my", explicitly attribute the statement to that user by name in the synthesized text.
+
+DO NOT summarize away details as "noise". Every specific fact matters.
 
 Input:
 A JSON list of source message objects. Each object contains:
@@ -48,10 +59,11 @@ At the very bottom of the document body, you MUST include standard Markdown foot
 DO NOT output any extra explanation. Start directly with the opening '---' of the YAML block.
 """
 
-def synthesize_page(page_index: int, cluster: List[Dict[str, Any]], feedback: str = None, temperature: float = 0.3) -> str:
+def synthesize_page(page_index: int, cluster: List[Dict[str, Any]], feedback: str = None, temperature: float = 0.3, alias_map: Optional[Dict[str, List[str]]] = None) -> str:
     """
     Synthesizes a markdown page from a cluster of classified sentences.
     page_index is an integer used to generate a unique page ID.
+    alias_map is an optional {user_id: [name1, name2, ...]} dict for alias injection.
     """
     if not cluster:
         return ""
@@ -68,10 +80,32 @@ def synthesize_page(page_index: int, cluster: List[Dict[str, Any]], feedback: st
             "author": item.get("metadata", {}).get("user", "unknown_user"),
             "timestamp": item.get("metadata", {}).get("timestamp", "")
         })
+    
+    # Build alias context for users in this cluster
+    alias_context = ""
+    if alias_map:
+        cluster_users = set(item.get("metadata", {}).get("user", "") for item in cluster)
+        relevant_aliases = {}
+        for user_display in cluster_users:
+            uid = user_display.split(" [")[-1].rstrip("]")
+            if uid in alias_map:
+                relevant_aliases[user_display] = alias_map[uid]
+        
+        if relevant_aliases:
+            alias_lines = []
+            for display, names in relevant_aliases.items():
+                alias_lines.append(f"- {display} is also known as: {', '.join(names)}")
+            alias_context = (
+                "\n\nUSER ALIAS INFORMATION (these names all refer to the same person):\n"
+                + "\n".join(alias_lines)
+                + "\n\nWhen writing about these users, use their most commonly "
+                  "self-introduced name and note aliases. When a user says 'I' or 'my', "
+                  "attribute it to ALL their known names."
+            )
         
     messages = [
         {"role": "system", "content": SYNTHESIZER_PROMPT},
-        {"role": "user", "content": f"Page Index: {page_index}\nSource Data:\n" + json.dumps(input_data)}
+        {"role": "user", "content": f"Page Index: {page_index}\n{alias_context}\nSource Data:\n" + json.dumps(input_data)}
     ]
     if feedback:
         messages.append({

@@ -42,12 +42,26 @@ def read_root():
         "version": "1.0.0"
     }
 
+worker = None
+
 @app.on_event("startup")
 def startup_event():
+    global worker
     logger.info("backend_startup", msg="Cortex server starting up...")
+    from app.ingestion.queue import IngestionQueueWorker
+    # Start the background polling queue worker
+    worker = IngestionQueueWorker(poll_interval_sec=300)
+    worker.start()
 
 @app.on_event("shutdown")
 def shutdown_event():
+    global worker
+    if worker:
+        try:
+            worker.stop()
+        except Exception as e:
+            logger.error("failed_to_stop_worker", error=str(e))
+            
     from app.database.connection import close_all_connections
     close_all_connections()
     logger.info("backend_shutdown", msg="Cortex server shutting down...")

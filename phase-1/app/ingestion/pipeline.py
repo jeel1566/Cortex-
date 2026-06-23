@@ -14,6 +14,7 @@ from app.ingestion.classifier import classify_sentences
 from app.ingestion.clusterer import cluster_sentences
 from app.ingestion.synthesizer import synthesize_page
 from app.ingestion.validation import validate_page
+from app.ingestion.alias_resolver import resolve_aliases, save_alias_map
 
 def parse_markdown_with_frontmatter(content: str) -> Tuple[Dict[str, Any], str]:
     """Parses a markdown string containing a YAML frontmatter block."""
@@ -141,8 +142,9 @@ def load_and_filter_csv(csv_path: str) -> List[Dict[str, Any]]:
             # Replace user mentions
             text_with_mentions = replace_user_mentions(text, user_map)
                 
-            # Redact PII
-            clean_text = redact_pii(text_with_mentions)
+            # PII access is now gated by L0-L5 authority levels (Phase 2 FR-004)
+            # instead of destructive regex redaction that was destroying dates and PR numbers
+            clean_text = text_with_mentions
             
             channel = row.get('channel_id', '') or 'unknown_channel'
             user_id = row.get('user', '') or 'unknown_user'
@@ -158,11 +160,12 @@ def load_and_filter_csv(csv_path: str) -> List[Dict[str, Any]]:
             
     return filtered_messages
 
-def run_ingestion_pipeline(csv_path: str, max_messages: int = 200, max_clusters: int = None) -> List[Dict[str, Any]]:
+def run_ingestion_pipeline(csv_path: str, max_messages: int = 200, max_clusters: int = None, tenant_dir: str = None) -> List[Dict[str, Any]]:
     """
     Runs the complete Phase 1 ingestion pipeline.
     max_messages limits execution size to conserve tokens on Azure during testing.
     max_clusters limits the number of clusters to process to control runtime.
+    tenant_dir is the tenant directory path for saving alias maps.
     Returns a list of synthesized page dicts:
     [
         {"page_id": "page_001", "content": "...", "metadata": {...}, "validation": {...}},
@@ -178,6 +181,17 @@ def run_ingestion_pipeline(csv_path: str, max_messages: int = 200, max_clusters:
     # Limit message count for safety
     messages = messages[:max_messages]
     print(f"Loaded {len(messages)} messages for ingestion.")
+    
+    # Step 1.5: Resolve user aliases (Two-phase: regex + LLM validation)
+    print("Step 1.5: Resolving user aliases...")
+    users_csv = csv_path.replace("messages.csv", "users.csv")
+    user_map = load_user_mappings(users_csv)
+    alias_map = resolve_aliases(messages, user_map, use_llm_validation=True)
+    
+    # Save alias map for query-time use
+    if tenant_dir:
+        alias_path = os.path.join(tenant_dir, "os", "alias_map.json")
+        save_alias_map(alias_map, alias_path)
     
     # Step 2: Split into sentences and map back to metadata
     print("Step 2: Splitting messages into sentences...")
@@ -265,7 +279,7 @@ def run_ingestion_pipeline(csv_path: str, max_messages: int = 200, max_clusters:
         while attempts < max_attempts and not validation_passed:
             attempts += 1
             print(f"    Synthesis attempt {attempts}/{max_attempts}...")
-            page_content = synthesize_page(page_index, cluster, feedback=feedback, temperature=temperature)
+            page_content = synthesize_page(page_index, cluster, feedback=feedback, temperature=temperature, alias_map=alias_map)
             
             print("    Validating synthesized page...")
             validation_result = validate_page(sources_list, page_content)

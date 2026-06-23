@@ -22,6 +22,7 @@ from app.llm.embedding import encode
 from app.llm.kimi import get_kimi_client
 from app.storage.hnsw_index import NumPyVectorIndex
 from app.storage.graph import CortexGraph
+from app.ingestion.alias_resolver import load_alias_map
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +89,12 @@ class CortexQueryEngine:
         self.graph = CortexGraph(adjacency_path=adjacency_path)
         print(f"[CortexQueryEngine] Graph has {len(self.graph.graph)} nodes.")
 
+        # Load alias map for query-time alias expansion
+        alias_path = os.path.join(tenant_dir, "os", "alias_map.json")
+        self.alias_map = load_alias_map(alias_path)
+        if self.alias_map:
+            print(f"[CortexQueryEngine] Loaded aliases for {len(self.alias_map)} users.")
+
     # ------------------------------------------------------------------
     def query(self, question: str) -> Dict[str, Any]:
         """
@@ -105,9 +112,12 @@ class CortexQueryEngine:
         """
         t_start = time.time()
 
-        # 1. Embed question
+        # 0. Expand query with known aliases
+        expanded_question = self._expand_query_with_aliases(question)
+
+        # 1. Embed question (use expanded version for better retrieval)
         t0 = time.time()
-        query_vector = encode(question)
+        query_vector = encode(expanded_question)
         t_embed = (time.time() - t0) * 1000
 
         # 2. HNSW lookup -> entry page candidates
@@ -164,6 +174,21 @@ class CortexQueryEngine:
             "total_latency_ms": total_ms,
             "pages_read_count": len(loaded_pages),
         }
+
+    # ------------------------------------------------------------------
+    def _expand_query_with_aliases(self, question: str) -> str:
+        if not self.alias_map:
+            return question
+        q_low = question.lower()
+        notes = []
+        for names in self.alias_map.values():
+            for n in names:
+                if n.lower() in q_low:
+                    others = [x for x in names if x.lower() != n.lower()]
+                    if others:
+                        notes.append(f"(Note: {n} is also known as {', '.join(others)})")
+                    break
+        return f"{question} {' '.join(notes)}" if notes else question
 
     # ------------------------------------------------------------------
     def _generate_answer(self, question: str, context_blocks: List[str]) -> str:
