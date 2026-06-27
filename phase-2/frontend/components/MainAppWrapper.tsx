@@ -212,11 +212,11 @@ export default function MainAppWrapper({ children }: { children: React.ReactNode
                     <div>
                       <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>API Endpoint URL</label>
                       <input 
-                        type="url" 
+                        type="text" 
                         required
                         value={webApiEndpoint} 
                         onChange={(e) => setWebApiEndpoint(e.target.value)} 
-                        placeholder="https://api.openai.com/v1"
+                        placeholder="https://api.groq.com/openai/v1"
                         style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "#fff" }}
                       />
                     </div>
@@ -253,7 +253,7 @@ export default function MainAppWrapper({ children }: { children: React.ReactNode
                     <div>
                       <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Ollama Endpoint</label>
                       <input 
-                        type="url" 
+                        type="text" 
                         required
                         value={ollamaEndpoint} 
                         onChange={(e) => setOllamaEndpoint(e.target.value)} 

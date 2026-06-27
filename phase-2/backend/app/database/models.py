@@ -79,4 +79,14 @@ def init_database(conn: sqlite3.Connection):
     cursor.execute(CREATE_INGESTION_JOBS_TABLE)
     cursor.execute(CREATE_FEEDBACK_TABLE)
     cursor.execute(CREATE_QUERY_LOG_TABLE)
+    
+    # Run dynamic migration to add current_stage column to ingestion_jobs if not exists
+    try:
+        cursor.execute("SELECT current_stage FROM ingestion_jobs LIMIT 1")
+    except sqlite3.OperationalError:
+        try:
+            cursor.execute("ALTER TABLE ingestion_jobs ADD COLUMN current_stage TEXT DEFAULT 'queued'")
+        except Exception as e:
+            print(f"Migration error: {e}")
+            
     conn.commit()

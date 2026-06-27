@@ -23,6 +23,12 @@ import time
 import datetime
 import argparse
 
+# Force UTF-8 output on Windows so LLM responses with non-ASCII chars don't crash
+if sys.stdout.encoding != "utf-8":
+    sys.stdout = open(sys.stdout.fileno(), mode="w", encoding="utf-8", buffering=1)
+if sys.stderr.encoding != "utf-8":
+    sys.stderr = open(sys.stderr.fileno(), mode="w", encoding="utf-8", buffering=1)
+
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(os.path.join(BASE_DIR, "phase-1"))
 sys.path.append(os.path.join(BASE_DIR, "phase-1", "app"))
@@ -172,7 +178,8 @@ def run(max_messages: int, batch_size: int):
             validation   = validate_page(sources, page_content)
             passed       = validation.get("validation_passed", False)
             if not passed:
-                print(f"           Validation failed (attempt {attempts}): {validation.get('reason','')}")
+                reason = validation.get('reason', '').encode('utf-8', 'replace').decode('utf-8')
+                print(f"           Validation failed (attempt {attempts}): {reason}")
 
         status = "APPROVED" if passed else "DRAFT"
 

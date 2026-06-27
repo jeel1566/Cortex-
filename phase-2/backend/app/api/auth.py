@@ -39,8 +39,10 @@ def decode_clerk_jwt(token: str) -> dict:
         )
         return payload
     except jwt.ExpiredSignatureError:
+        print("Clerk Token error: Expired signature")
         raise HTTPException(status_code=401, detail="JWT token has expired.")
     except jwt.PyJWTError as e:
+        print(f"Clerk Token decode error: {e} (token prefix: {token[:25]}...)")
         raise HTTPException(status_code=401, detail=f"Invalid Clerk token: {e}")
 
 def get_current_agent(credentials: HTTPAuthorizationCredentials = Depends(security_scheme)) -> dict:
@@ -50,31 +52,37 @@ def get_current_agent(credentials: HTTPAuthorizationCredentials = Depends(securi
       - tenant_id: string
       - authority_level: integer (0-5)
       - name: string (optional)
+    Falls back to using Clerk's `sub` claim as tenant_id with admin level
+    when custom claims are not present (no JWT template configured).
     """
     token = credentials.credentials
     payload = decode_clerk_jwt(token)
-    
-    tenant_id = payload.get("tenant_id")
+
+    tenant_id = payload.get("tenant_id") or payload.get("sub")
     authority_level = payload.get("authority_level")
-    
-    if tenant_id is None or authority_level is None:
+
+    # Graceful fallback: if no custom claims, treat as admin (level 5)
+    if authority_level is None:
+        authority_level = 5
+
+    if not tenant_id:
         raise HTTPException(
-            status_code=401, 
-            detail="Token is missing required tenant_id or authority_level claims."
+            status_code=401,
+            detail="Token is missing required tenant_id or sub claim."
         )
-        
+
     try:
         auth_level = int(authority_level)
     except ValueError:
         raise HTTPException(status_code=401, detail="authority_level must be an integer.")
-        
+
     if not (0 <= auth_level <= 5):
         raise HTTPException(status_code=401, detail="authority_level must be between 0 and 5.")
-        
+
     return {
         "tenant_id": tenant_id,
         "authority_level": auth_level,
-        "name": payload.get("name", "anonymous")
+        "name": payload.get("name", payload.get("email", "anonymous"))
     }
 
 class PermissionChecker:

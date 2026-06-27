@@ -70,8 +70,9 @@ class NotionClient:
 
     def fetch_database_updates(self, database_id: str, last_edited_since_iso: str) -> List[Dict[str, Any]]:
         """
-        Queries a Notion database for pages edited since a specific ISO timestamp.
+        Queries a Notion database or the whole workspace for pages edited since a specific ISO timestamp.
         Returns a list of simplified message structures with full page text contents.
+        If database_id is empty, None, or 'workspace'/'all', it queries all workspace pages/notes using Notion Search.
         """
         # Under offline or mock environment, return simulated updates
         if self.api_key == "mock_notion_key":
@@ -86,46 +87,134 @@ class NotionClient:
                 }
             ]
 
-        url = f"{self.base_url}/databases/{database_id}/query"
-        payload = {
-            "filter": {
-                "property": "Last Edited Time",
-                "date": {
-                    "after": last_edited_since_iso
+        import datetime
+        def parse_iso(dt_str: str) -> datetime.datetime:
+            if not dt_str:
+                return datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+            cleaned = dt_str.replace("Z", "+00:00")
+            try:
+                if "." in cleaned:
+                    parts = cleaned.split(".")
+                    subparts = parts[1].split("+")
+                    if len(subparts[0]) > 6:
+                        parts[1] = subparts[0][:6] + ("+" + subparts[1] if len(subparts) > 1 else "")
+                    cleaned = ".".join(parts)
+                return datetime.datetime.fromisoformat(cleaned)
+            except ValueError:
+                return None
+
+        since_dt = parse_iso(last_edited_since_iso)
+        is_workspace_search = not database_id or database_id.strip() == "" or database_id.strip().lower() in ("workspace", "all")
+
+        results = []
+
+        if is_workspace_search:
+            url = f"{self.base_url}/search"
+            has_more = True
+            next_cursor = None
+
+            try:
+                while has_more:
+                    payload = {
+                        "filter": {
+                            "value": "page",
+                            "property": "object"
+                        },
+                        "sort": {
+                            "direction": "descending",
+                            "timestamp": "last_edited_time"
+                        }
+                    }
+                    if next_cursor:
+                        payload["start_cursor"] = next_cursor
+
+                    response = requests.post(url, json=payload, headers=self.headers, timeout=15)
+                    response.raise_for_status()
+                    data = response.json()
+
+                    for page in data.get("results", []):
+                        page_id = page.get("id")
+                        last_edited_time = page.get("last_edited_time", "")
+
+                        page_dt = parse_iso(last_edited_time)
+                        if page_dt and since_dt:
+                            if page_dt <= since_dt:
+                                has_more = False
+                                break
+                        else:
+                            if last_edited_time <= last_edited_since_iso:
+                                has_more = False
+                                break
+
+                        title = "Untitled Page"
+                        properties = page.get("properties", {})
+                        for prop_name, prop_val in properties.items():
+                            if prop_val.get("type") == "title":
+                                title_list = prop_val.get("title", [])
+                                if title_list:
+                                    title = title_list[0].get("text", {}).get("content", "Untitled Page")
+                                    break
+
+                        page_body = self.fetch_page_content(page_id)
+                        full_text = f"Document Title: {title}\n\n{page_body}" if page_body else f"Document Title: {title}"
+
+                        results.append({
+                            "text": full_text,
+                            "user": "notion_sync_bot",
+                            "channel": "notion_kb",
+                            "timestamp": last_edited_time,
+                            "source_id": f"notion://page/{page_id}"
+                        })
+
+                    if not has_more:
+                        break
+
+                    has_more = data.get("has_more", False)
+                    next_cursor = data.get("next_cursor")
+
+                return results
+            except Exception as e:
+                print(f"Error searching Notion workspace: {e}")
+                return []
+        else:
+            url = f"{self.base_url}/databases/{database_id}/query"
+            payload = {
+                "filter": {
+                    "property": "Last Edited Time",
+                    "date": {
+                        "after": last_edited_since_iso
+                    }
                 }
             }
-        }
-        
-        try:
-            response = requests.post(url, json=payload, headers=self.headers, timeout=15)
-            response.raise_for_status()
-            data = response.json()
             
-            results = []
-            for page in data.get("results", []):
-                page_id = page.get("id")
-                # Parse simplified text properties
-                title = "Untitled Page"
-                properties = page.get("properties", {})
-                for prop_name, prop_val in properties.items():
-                    if prop_val.get("type") == "title":
-                        title_list = prop_val.get("title", [])
-                        if title_list:
-                            title = title_list[0].get("text", {}).get("content", "Untitled Page")
-                            break
-                            
-                # Retrieve actual page body text from block children
-                page_body = self.fetch_page_content(page_id)
-                full_text = f"Document Title: {title}\n\n{page_body}" if page_body else f"Document Title: {title}"
+            try:
+                response = requests.post(url, json=payload, headers=self.headers, timeout=15)
+                response.raise_for_status()
+                data = response.json()
                 
-                results.append({
-                    "text": full_text,
-                    "user": "notion_sync_bot",
-                    "channel": "notion_kb",
-                    "timestamp": page.get("last_edited_time", ""),
-                    "source_id": f"notion://page/{page_id}"
-                })
-            return results
-        except Exception as e:
-            print(f"Error querying Notion API: {e}")
-            return []
+                for page in data.get("results", []):
+                    page_id = page.get("id")
+                    title = "Untitled Page"
+                    properties = page.get("properties", {})
+                    for prop_name, prop_val in properties.items():
+                        if prop_val.get("type") == "title":
+                            title_list = prop_val.get("title", [])
+                            if title_list:
+                                title = title_list[0].get("text", {}).get("content", "Untitled Page")
+                                break
+                                
+                    page_body = self.fetch_page_content(page_id)
+                    full_text = f"Document Title: {title}\n\n{page_body}" if page_body else f"Document Title: {title}"
+                    
+                    results.append({
+                        "text": full_text,
+                        "user": "notion_sync_bot",
+                        "channel": "notion_kb",
+                        "timestamp": page.get("last_edited_time", ""),
+                        "source_id": f"notion://page/{page_id}"
+                    })
+                return results
+            except Exception as e:
+                print(f"Error querying Notion database: {e}")
+                return []
+

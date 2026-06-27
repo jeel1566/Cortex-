@@ -9,6 +9,8 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "done" | "error">("idle");
+  const [syncMessage, setSyncMessage] = useState<string>("");
 
   // Active Tab
   const [activeTab, setActiveTab] = useState<"ai" | "notion" | "slack">("ai");
@@ -106,6 +108,73 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchSettings();
   }, [isLoaded, isSignedIn]);
+
+  const pollJobStatus = async (jobId: string, token: string) => {
+    const stageMap: Record<string, string> = {
+      "queued": "Queued in background...",
+      "notion_fetch": "📥 Fetching pages and documents from Notion...",
+      "pii_redaction": "🛡️ Redacting PII & cleaning content...",
+      "sentence_splitting": "✂️ Parsing text into sentences...",
+      "speech_act_classification": "🧠 Classifying knowledge statements...",
+      "sentence_clustering": "🔍 Grouping related topics together...",
+      "page_synthesis": "✍️ Synthesizing knowledge pages...",
+      "graph_indexing": "🗂️ Generating vector embeddings & graph...",
+      "complete": "✅ Sync complete! Knowledge base updated.",
+      "failed": "❌ Sync failed during processing."
+    };
+
+    const intervalId = setInterval(async () => {
+      try {
+        const res = await fetch(`http://127.0.0.1:8000/v1/ingest/${jobId}`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const status = data.status;
+          const stage = data.current_stage || "queued";
+          
+          if (status === "complete") {
+            setSyncStatus("done");
+            setSyncMessage(`✓ Sync completed! ${data.pages_created} pages created, ${data.pages_updated} pages updated.`);
+            clearInterval(intervalId);
+            fetchSettings(); // Refresh settings to show new last_polled time
+            setTimeout(() => { setSyncStatus("idle"); setSyncMessage(""); }, 8000);
+          } else if (status === "failed") {
+            setSyncStatus("error");
+            setSyncMessage("Notion sync failed. Check backend logs or connection settings.");
+            clearInterval(intervalId);
+          } else {
+            const displayMsg = stageMap[stage] || `Processing (${stage})...`;
+            setSyncMessage(`Job ID: ${jobId} — ${displayMsg}`);
+          }
+        }
+      } catch (e) {
+        console.error("Error polling sync status:", e);
+      }
+    }, 1500);
+  };
+
+  const triggerNotionSync = async () => {
+    setSyncStatus("syncing");
+    setSyncMessage("Initializing Notion connection...");
+    try {
+      const token = await getAuthToken();
+      const res = await fetch("http://127.0.0.1:8000/v1/notion/sync", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        pollJobStatus(data.job_id, token);
+      } else {
+        setSyncStatus("error");
+        setSyncMessage(data.detail || "Sync failed. Make sure Notion is enabled and API key is saved.");
+      }
+    } catch (e: any) {
+      setSyncStatus("error");
+      setSyncMessage("Could not reach backend. Is the server running?");
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -327,11 +396,11 @@ export default function SettingsPage() {
                     <div>
                       <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>API Endpoint URL</label>
                       <input 
-                        type="url" 
+                        type="text" 
                         required
                         value={webApiEndpoint} 
                         onChange={(e) => setWebApiEndpoint(e.target.value)} 
-                        placeholder="https://api.openai.com/v1"
+                        placeholder="https://api.groq.com/openai/v1"
                         style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "#fff" }}
                       />
                     </div>
@@ -365,7 +434,7 @@ export default function SettingsPage() {
                     <div>
                       <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Ollama Endpoint</label>
                       <input 
-                        type="url" 
+                        type="text" 
                         required
                         value={ollamaEndpoint} 
                         onChange={(e) => setOllamaEndpoint(e.target.value)} 
@@ -477,18 +546,64 @@ export default function SettingsPage() {
                 </div>
                 
                 <div>
-                  <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Notion Database ID</label>
+                  <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>
+                    Notion Database ID <span style={{ color: "#6b7280", fontWeight: 400 }}>(optional)</span>
+                  </label>
                   <input 
                     type="text" 
                     value={notionDatabaseId} 
                     onChange={(e) => setNotionDatabaseId(e.target.value)} 
-                    placeholder="e.g. 1a2b3c4d5e6f..."
-                    required={notionEnabled}
+                    placeholder="Leave blank to sync ALL pages, notes & docs from your workspace"
                     style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "#fff" }}
                   />
                   <small style={{ display: "block", color: "var(--text-secondary)", fontSize: "0.75rem", marginTop: "0.35rem" }}>
-                    Find this ID in the URL of your Notion database. Ensure your integration is shared with the database.
+                    💡 Leave blank to ingest <strong style={{ color: "#a1a1aa" }}>all pages, notes, plans and docs</strong> from your entire Notion workspace. Or paste a specific Database ID to sync only that database.
                   </small>
+                </div>
+
+                {/* Sync Now Button */}
+                <div style={{ borderTop: "1px solid var(--border)", paddingTop: "1.25rem" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "1rem" }}>
+                    <div>
+                      <div style={{ fontSize: "0.9rem", fontWeight: 600, color: "#fff", marginBottom: "0.25rem" }}>Manual Sync</div>
+                      <div style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>Pull all Notion pages/notes into Cortex right now</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={triggerNotionSync}
+                      disabled={syncStatus === "syncing"}
+                      style={{
+                        padding: "0.6rem 1.25rem",
+                        background: syncStatus === "syncing" ? "rgba(99,102,241,0.3)" : syncStatus === "done" ? "rgba(16,185,129,0.2)" : syncStatus === "error" ? "rgba(239,68,68,0.2)" : "var(--accent)",
+                        border: "1px solid var(--accent)",
+                        borderRadius: "8px",
+                        color: "#fff",
+                        fontSize: "0.875rem",
+                        fontWeight: 600,
+                        cursor: syncStatus === "syncing" ? "not-allowed" : "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.5rem",
+                        whiteSpace: "nowrap"
+                      }}
+                    >
+                      {syncStatus === "syncing" ? "⏳ Syncing..." : syncStatus === "done" ? "✓ Synced!" : syncStatus === "error" ? "✗ Failed" : "🔄 Sync Now"}
+                    </button>
+                  </div>
+                  {syncMessage && (
+                    <div style={{
+                      marginTop: "0.75rem",
+                      padding: "0.75rem",
+                      borderRadius: "6px",
+                      fontSize: "0.82rem",
+                      background: syncStatus === "done" ? "rgba(16,185,129,0.1)" : "rgba(239,68,68,0.1)",
+                      border: `1px solid ${syncStatus === "done" ? "rgba(16,185,129,0.2)" : "rgba(239,68,68,0.2)"}`,
+                      color: syncStatus === "done" ? "var(--success)" : "var(--error)"
+                    }}>
+                      {syncMessage}
+                    </div>
+                  )}
+
                 </div>
 
                 <div style={{ borderTop: "1px solid var(--border)", paddingTop: "1.25rem", marginTop: "0.5rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>

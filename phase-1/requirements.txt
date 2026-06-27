@@ -3,3 +3,4 @@ requests>=2.31.0
 fastembed>=0.8.0
 llama-index-core>=0.14.0
 llama-index-embeddings-huggingface>=0.6.0
+websockets>=10.0

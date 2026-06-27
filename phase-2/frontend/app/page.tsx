@@ -1,6 +1,82 @@
-import React from "react";
+"use client";
+
+import React, { useState, useEffect } from "react";
+import { useAuth } from "@clerk/nextjs";
 
 export default function DashboardPage() {
+  const { getToken, isLoaded, isSignedIn } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [pagesCount, setPagesCount] = useState(0);
+  const [activeSources, setActiveSources] = useState(0);
+
+  const getAuthToken = async () => {
+    if (process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
+      try {
+        const token = await getToken();
+        if (token) return token;
+      } catch (e) {
+        console.warn("Clerk token acquisition failed, using fallback.", e);
+      }
+    }
+    // Fallback base64 mock token (represents tenant_a L5 Admin)
+    const mockPayload = { tenant_id: "tenant_a", authority_level: 5, name: "Admin (Mock Tenant)" };
+    return btoa(JSON.stringify(mockPayload));
+  };
+
+  useEffect(() => {
+    const fetchDashboardMetrics = async () => {
+      setLoading(true);
+      try {
+        const token = await getAuthToken();
+        
+        // 1. Fetch total pages count
+        const pagesRes = await fetch("http://127.0.0.1:8000/v1/pages", {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        let pagesCountVal = 0;
+        if (pagesRes.ok) {
+          const pagesData = await pagesRes.json();
+          // Filter out README since it's just a placeholder repository page
+          const realPages = pagesData.filter((p: any) => p.id !== "README");
+          pagesCountVal = realPages.length;
+          setPagesCount(pagesCountVal);
+        }
+
+        // 2. Fetch settings to determine active sync sources
+        const settingsRes = await fetch("http://127.0.0.1:8000/v1/settings", {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (settingsRes.ok) {
+          const settingsData = await settingsRes.json();
+          let sourcesCount = 0;
+          if (settingsData.connectors) {
+            if (settingsData.connectors.notion?.enabled) sourcesCount += 1;
+            if (settingsData.connectors.slack?.enabled) sourcesCount += 1;
+          }
+          setActiveSources(sourcesCount);
+        }
+      } catch (e) {
+        console.error("Error loading dashboard metrics:", e);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchDashboardMetrics();
+  }, [isLoaded, isSignedIn]);
+
+  if (loading) {
+    return (
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "50vh", color: "var(--text-secondary)" }}>
+        <div>
+          <div style={{ width: "45px", height: "45px", border: "3px solid var(--border)", borderTopColor: "var(--accent)", borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 1.25rem" }}></div>
+          <div style={{ fontSize: "1.1rem", fontWeight: 600 }}>Loading dashboard metrics...</div>
+          <style dangerouslySetInnerHTML={{ __html: `@keyframes spin { to { transform: rotate(360deg); } }` }} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <h1 className="header-title">Cortex Dashboard</h1>
@@ -12,7 +88,7 @@ export default function DashboardPage() {
             Total Pages Ingested
           </div>
           <div style={{ fontSize: "2.5rem", fontWeight: 700, fontFamily: "var(--font-display)" }}>
-            142
+            {pagesCount}
           </div>
         </div>
         <div className="card">
@@ -20,7 +96,7 @@ export default function DashboardPage() {
             Approval Queue Size
           </div>
           <div style={{ fontSize: "2.5rem", fontWeight: 700, fontFamily: "var(--font-display)", color: "var(--warning)" }}>
-            3 Pending
+            0 Pending
           </div>
         </div>
         <div className="card">
@@ -28,7 +104,7 @@ export default function DashboardPage() {
             Active Synced Sources
           </div>
           <div style={{ fontSize: "2.5rem", fontWeight: 700, fontFamily: "var(--font-display)", color: "var(--accent)" }}>
-            2 Sources
+            {activeSources} {activeSources === 1 ? "Source" : "Sources"}
           </div>
         </div>
       </div>

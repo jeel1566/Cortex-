@@ -4,6 +4,8 @@ import json
 import subprocess
 import time
 from typing import Any, Dict, List, Optional
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def ensure_ollama_running(model_name="llama3"):
     model_name = model_name.strip()
@@ -86,7 +88,9 @@ def load_env():
                         if line and not line.startswith("#"):
                             if "=" in line:
                                 k, v = line.split("=", 1)
-                                os.environ[k.strip()] = v.strip().strip('"').strip("'").strip()
+                                k_key = k.strip()
+                                if k_key not in os.environ:
+                                    os.environ[k_key] = v.strip().strip('"').strip("'").strip()
                 break
             except Exception as e:
                 print(f"Warning: Failed to load .env from {abs_path}: {e}")
@@ -490,7 +494,7 @@ class CortexLLMClient:
         for attempt in range(max_retries):
             try:
                 timeout_val = 300 if self.provider == "local_ai" else 60
-                response = requests.post(url, headers=headers, json=payload, timeout=timeout_val)
+                response = requests.post(url, headers=headers, json=payload, timeout=timeout_val, verify=False)
                 
                 # Check for 429 rate limit
                 if response.status_code == 429:

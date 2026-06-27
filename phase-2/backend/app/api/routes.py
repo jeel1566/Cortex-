@@ -235,7 +235,7 @@ def run_background_ingest(tenant_id: str, job_id: str, content: str, source_type
             })
             
         # Run compiler pipeline
-        pages_created = run_ingestion_pipeline(tenant_id, messages)
+        pages_created = run_ingestion_pipeline(tenant_id, messages, job_id=job_id)
         
         # Mark job complete
         cursor.execute(
@@ -328,6 +328,7 @@ def get_ingest_status(
     return {
         "job_id": row["id"],
         "status": row["status"],
+        "current_stage": row["current_stage"] if "current_stage" in row.keys() else "queued",
         "pages_created": row["pages_created"],
         "pages_updated": row["pages_updated"],
         "conflicts_found": row["conflicts_found"],
@@ -533,7 +534,7 @@ def update_settings(
             if new_notion.get("api_key") == "********":
                 new_notion["api_key"] = old_notion.get("api_key", "")
             if "last_polled" not in new_notion or not new_notion["last_polled"]:
-                new_notion["last_polled"] = old_notion.get("last_polled", "2026-06-01T00:00:00Z")
+                new_notion["last_polled"] = old_notion.get("last_polled", "2000-01-01T00:00:00Z")
             tenant_config["notion"] = new_notion
             
         # Slack
@@ -560,4 +561,108 @@ def update_settings(
         "status": "success",
         "message": "Settings updated successfully",
         "ai_provider": request.ai_provider
+    }
+
+# ── POST /v1/notion/sync ─────────────────────────────────────────────────────
+
+def run_notion_sync_background(tenant_id: str, job_id: str):
+    """Background task: pull all pages/notes from Notion workspace and ingest them."""
+    from app.ingestion.notion import NotionClient
+    from app.ingestion.pipeline import run_ingestion_pipeline
+
+    conn = get_tenant_connection(tenant_id)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("UPDATE ingestion_jobs SET status = 'processing', current_stage = 'notion_fetch' WHERE id = ?", (job_id,))
+        conn.commit()
+
+        # Load tenant config
+        cursor.execute("SELECT config FROM tenants WHERE id = ?", (tenant_id,))
+        row = cursor.fetchone()
+        tenant_config = json.loads(row["config"]) if row and row["config"] else {}
+        notion_cfg = tenant_config.get("notion", {})
+
+        api_key = notion_cfg.get("api_key", "")
+        database_id = notion_cfg.get("database_id", "").strip()
+        last_polled = notion_cfg.get("last_polled", "2000-01-01T00:00:00Z")
+
+        if not api_key:
+            raise ValueError("Notion API key is not configured.")
+
+        client = NotionClient(api_key=api_key)
+
+        # If no database_id — search entire workspace (all pages/notes/docs)
+        effective_db_id = database_id if database_id else ""
+        messages = client.fetch_database_updates(effective_db_id, last_polled)
+
+        pages_created = 0
+        if messages:
+            pages_created = run_ingestion_pipeline(tenant_id, messages, job_id=job_id)
+
+        # Update last_polled timestamp
+        now_iso = datetime.datetime.utcnow().isoformat() + "Z"
+        notion_cfg["last_polled"] = now_iso
+        tenant_config["notion"] = notion_cfg
+        cursor.execute("UPDATE tenants SET config = ? WHERE id = ?", (json.dumps(tenant_config), tenant_id))
+        cursor.execute(
+            "UPDATE ingestion_jobs SET status = 'complete', completed_at = ?, pages_created = ? WHERE id = ?",
+            (now_iso, pages_created, job_id)
+        )
+        conn.commit()
+
+    except Exception as e:
+        logger.error("notion_sync_failed", tenant_id=tenant_id, job_id=job_id, error=str(e))
+        cursor.execute(
+            "UPDATE ingestion_jobs SET status = 'failed', completed_at = ? WHERE id = ?",
+            (datetime.datetime.utcnow().isoformat() + "Z", job_id)
+        )
+        conn.commit()
+
+
+@router.post("/notion/sync", status_code=status.HTTP_202_ACCEPTED)
+def trigger_notion_sync(
+    background_tasks: BackgroundTasks,
+    agent: dict = Depends(PermissionChecker(min_level=1))
+):
+    """
+    Manually trigger a full Notion sync.
+    Pulls all pages, notes, plans, and docs from the connected Notion workspace
+    (or a specific database if configured) and runs them through the ingestion pipeline.
+    """
+    tenant_id = agent["tenant_id"]
+    conn = get_tenant_connection(tenant_id)
+    cursor = conn.cursor()
+
+    # Verify Notion is configured
+    cursor.execute("SELECT config FROM tenants WHERE id = ?", (tenant_id,))
+    row = cursor.fetchone()
+    tenant_config = json.loads(row["config"]) if row and row["config"] else {}
+    notion_cfg = tenant_config.get("notion", {})
+
+    if not notion_cfg.get("api_key"):
+        raise HTTPException(
+            status_code=400,
+            detail="Notion API key is not set. Please add your Notion token in Settings → Notion Sync and save first."
+        )
+
+    job_id = f"notion_{uuid.uuid4().hex[:8]}"
+    now_iso = datetime.datetime.utcnow().isoformat() + "Z"
+
+    cursor.execute(
+        """
+        INSERT INTO ingestion_jobs (id, tenant_id, status, source_type, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (job_id, tenant_id, "queued", "notion", now_iso)
+    )
+    conn.commit()
+
+    background_tasks.add_task(run_notion_sync_background, tenant_id=tenant_id, job_id=job_id)
+
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "message": "Notion sync started. All workspace pages and notes will be ingested.",
+        "poll_url": f"/v1/ingest/{job_id}"
     }

@@ -20,8 +20,13 @@ def encode_batch(texts: List[str]) -> List[List[float]]:
     if not texts:
         return []
     model = get_embedding_model()
-    embeddings = list(model.embed(texts))
-    return [[float(x) for x in emb] for emb in embeddings]
+    results = []
+    chunk_size = 16
+    for i in range(0, len(texts), chunk_size):
+        chunk = texts[i:i+chunk_size]
+        embeddings = list(model.embed(chunk))
+        results.extend([[float(x) for x in emb] for emb in embeddings])
+    return results
 
 if __name__ == '__main__':
     print("Loading model and testing encoding...")

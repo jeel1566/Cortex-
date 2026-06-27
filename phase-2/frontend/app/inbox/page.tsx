@@ -13,68 +13,11 @@ interface DraftPage {
   sources: string[];
 }
 
-const INITIAL_DRAFTS: DraftPage[] = [
-  {
-    id: "page_007",
-    title: "Superset WSGI Worker Configuration",
-    last_updated: "2026-06-17T11:00:00Z",
-    coverage: 0.96,
-    hallucination: 0.00,
-    completeness: 9,
-    content: `---
-id: page_007
-title: Superset WSGI Worker Configuration
-version: 1
-last_updated: 2026-06-17T11:00:00Z
-access_level: team
-sources:
-  - slack://C103/1702890123
-propositions:
-  - id: prop_1
-    text: "The WSGI server for Superset should be Gunicorn running with gevent workers."
-    sensitivity: team
----
-# Superset WSGI Worker Configuration
-
-When deploying Superset in production, the Gunicorn WSGI server should be configured to use gevent workers rather than thread workers to handle concurrent connection loads efficiently [^1].`,
-    sources: [
-        "U12345: We should run Gunicorn with gevent workers for Superset to avoid connection pooling issues.",
-        "U67890: Agreed, gevent workers handle high thread loads way better."
-    ]
-  },
-  {
-    id: "page_008",
-    title: "Standard Refund Window Policy",
-    last_updated: "2026-06-17T11:15:00Z",
-    coverage: 0.92,
-    hallucination: 0.02,
-    completeness: 8,
-    content: `---
-id: page_008
-title: Standard Refund Window Policy
-version: 1
-last_updated: 2026-06-17T11:15:00Z
-access_level: team
-sources:
-  - slack://C105/1702890987
-propositions:
-  - id: prop_1
-    text: "Standard refunds must be submitted in under 30 days."
-    sensitivity: public
----
-# Standard Refund Window Policy
-
-Refunds are processed within 5 business days, provided that requests are submitted within the 30-day window [^1].`,
-    sources: [
-        "U11111: Remember the refund request window is strictly 30 days.",
-        "U22222: Yep, and finance processes them in 5 days."
-    ]
-  }
-];
+const INITIAL_DRAFTS: DraftPage[] = [];
 
 export default function InboxPage() {
   const [drafts, setDrafts] = useState<DraftPage[]>(INITIAL_DRAFTS);
-  const [selectedId, setSelectedId] = useState<string>("page_007");
+  const [selectedId, setSelectedId] = useState<string>("");
 
   const selectedDraft = drafts.find(d => d.id === selectedId);
 

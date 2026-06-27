@@ -25,6 +25,11 @@ load_env()
 
 # LLM & Codex Settings
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "not_configured")
+
+# Unescape literal \n in CLERK_PUBLIC_KEY so PEM is correctly formatted for PyJWT
+_raw_clerk_key = os.environ.get("CLERK_PUBLIC_KEY", "")
+if _raw_clerk_key:
+    os.environ["CLERK_PUBLIC_KEY"] = _raw_clerk_key.replace("\\n", "\n")
 AGENT_ENDPOINT = os.environ.get("AGENT_ENDPOINT", "ws://127.0.0.1:4500")
 AGENT_MODEL = os.environ.get("AGENT_MODEL", "gpt-4o")
 

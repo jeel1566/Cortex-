@@ -47,7 +47,19 @@ def extract_secondary_links(content: str) -> List[Dict[str, str]]:
         links.append({"condition": m.group(1).strip(), "page": m.group(2).strip()})
     return links
 
-def run_ingestion_pipeline(tenant_id: str, raw_messages: List[Dict[str, Any]], batch_size: int = 20) -> List[Dict[str, Any]]:
+def update_job_stage(tenant_id: str, job_id: str, stage: str):
+    if not job_id:
+        return
+    try:
+        from app.database.connection import get_tenant_connection
+        conn = get_tenant_connection(tenant_id)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE ingestion_jobs SET current_stage = ? WHERE id = ?", (stage, job_id))
+        conn.commit()
+    except Exception as e:
+        print(f"Failed to update job stage: {e}")
+
+def run_ingestion_pipeline(tenant_id: str, raw_messages: List[Dict[str, Any]], batch_size: int = 20, job_id: str = None) -> List[Dict[str, Any]]:
     """
     Ingests messages for a specific tenant.
     raw_messages is a list of dicts: [{"text": str, "user": str, "channel": str, "timestamp": str}]
@@ -64,6 +76,7 @@ def run_ingestion_pipeline(tenant_id: str, raw_messages: List[Dict[str, Any]], b
     adj_path = os.path.join(tenant_dir, "graph", "adjacency.json")
     
     # 1. Clean messages and redact PII
+    update_job_stage(tenant_id, job_id, "pii_redaction")
     cleaned_messages = []
     for msg in raw_messages:
         text = msg.get("text", "")
@@ -78,6 +91,7 @@ def run_ingestion_pipeline(tenant_id: str, raw_messages: List[Dict[str, Any]], b
         })
         
     # 2. Split into sentence records
+    update_job_stage(tenant_id, job_id, "sentence_splitting")
     sentence_records = []
     for msg in cleaned_messages:
         for s in split_into_sentences(msg["text"]):
@@ -92,6 +106,7 @@ def run_ingestion_pipeline(tenant_id: str, raw_messages: List[Dict[str, Any]], b
             })
             
     # 3. Classify speech acts
+    update_job_stage(tenant_id, job_id, "speech_act_classification")
     texts = [r["text"] for r in sentence_records]
     classified_types = []
     for i in range(0, len(texts), batch_size):
@@ -102,9 +117,11 @@ def run_ingestion_pipeline(tenant_id: str, raw_messages: List[Dict[str, Any]], b
         r["type"] = t
         
     # 4. Cluster sentences
+    update_job_stage(tenant_id, job_id, "sentence_clustering")
     clusters = cluster_sentences(sentence_records, similarity_threshold=0.68)
     
     # 5. Synthesize, validate, and save pages
+    update_job_stage(tenant_id, job_id, "page_synthesis")
     vector_index = NumPyVectorIndex(index_path=index_path, dim=384)
     graph = CortexGraph(adjacency_path=adj_path)
     
@@ -189,6 +206,7 @@ def run_ingestion_pipeline(tenant_id: str, raw_messages: List[Dict[str, Any]], b
         })
         
     # 6. Build graph adjacency list
+    update_job_stage(tenant_id, job_id, "graph_indexing")
     for meta in pages_meta:
         pid = meta["page_id"]
         content = meta["content"]
@@ -213,5 +231,6 @@ def run_ingestion_pipeline(tenant_id: str, raw_messages: List[Dict[str, Any]], b
         vector_index.add_page(page_id, embedding)
         
     vector_index.save()
+    update_job_stage(tenant_id, job_id, "complete")
     
     return pages_meta
