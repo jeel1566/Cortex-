@@ -9,43 +9,32 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.
 
 from app.llm.kimi import get_kimi_client
 
-VALIDATION_PROMPT = """
-You are an expert quality assurance evaluator for a Knowledge OS.
-Your task is to validate a synthesized knowledge page against its raw source sentences.
+VALIDATION_PROMPT = """You are a meticulous Quality Assurance evaluator. Your task is to validate a synthesized knowledge page against its raw source sentences.
 
-Input:
-1. Sources: A JSON list of sentences that were used to create the page.
-2. Synthesized Page: The markdown page content (including the YAML header).
+<checks>
+1. Proposition Coverage:
+   - Extract key factual claims from the source sentences.
+   - Verify if each claim is correctly captured in the synthesized page.
+   - Calculate coverage: (claims found in page) / (total source claims) [0.0 - 1.0].
+2. Hallucination Rate:
+   - Verify if every claim made in the page is traceable to and supported by the source sentences.
+   - Calculate rate: (unverifiable claims) / (total page claims) [0.0 - 1.0].
+3. Completeness Score:
+   - Evaluate if the page is a comprehensive, cohesive summary of the raw sources.
+   - Score: [1 - 10] integer.
+</checks>
 
-You MUST perform three checks:
-Check 1: Proposition Coverage
-- Extract the key factual claims from the source sentences.
-- Check if each claim is correctly captured/reflected in the synthesized page.
-- Calculate score as (claims found in page) / (total source claims). (Float between 0.0 and 1.0).
+<criteria>
+Validation passes only if:
+- Proposition Coverage >= 0.90
+- Hallucination Rate <= 0.02
+- Completeness Score >= 7
+</criteria>
 
-Check 2: Hallucination Rate
-- Extract the claims made in the synthesized page.
-- Check if each page claim can be traced back and verified by the source sentences.
-- Calculate rate as (unverifiable claims) / (total page claims). (Float between 0.0 and 1.0).
-
-Check 3: Completeness Score
-- Evaluate if the page provides a complete, cohesive summary of the topic discussed in the sources.
-- Rate the completeness on an integer scale of 1 to 10.
-
-Validation Passed criteria:
-- Proposition Coverage must be >= 0.90
-- Hallucination Rate must be <= 0.02 (2%)
-- Completeness Score must be >= 7
-
-Output format: You MUST return a single JSON object containing exactly these fields:
-- "proposition_coverage" (float between 0.0 and 1.0)
-- "hallucination_rate" (float between 0.0 and 1.0)
-- "completeness_score" (integer between 1 and 10)
-- "validation_passed" (boolean)
-- "reason" (string explaining your scoring)
-
-Return ONLY valid JSON. No conversational text.
-"""
+<instructions>
+- Output MUST be a single valid JSON object containing exactly the keys: "proposition_coverage" (float), "hallucination_rate" (float), "completeness_score" (int), "validation_passed" (bool), and "reason" (str).
+- Do not output any markdown code blocks, greeting, or conversational text. Start directly with '{' and end with '}'.
+</instructions>"""
 
 def validate_page(sources: List[str], synthesized_page: str) -> Dict[str, Any]:
     """

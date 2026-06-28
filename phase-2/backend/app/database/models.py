@@ -71,6 +71,22 @@ CREATE TABLE IF NOT EXISTS query_log (
 );
 """
 
+CREATE_NOTION_OBJECTS_TABLE = """
+CREATE TABLE IF NOT EXISTS notion_objects (
+  notion_id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  url TEXT NOT NULL,
+  parent_id TEXT,
+  last_edited_time TEXT NOT NULL,
+  type TEXT NOT NULL,
+  sync_status TEXT NOT NULL CHECK(sync_status IN ('discovered','synced','failed','empty','inaccessible')),
+  error_message TEXT,
+  last_synced_at TEXT,
+  FOREIGN KEY(tenant_id) REFERENCES tenants(id)
+);
+"""
+
 def init_database(conn: sqlite3.Connection):
     """Initializes all SQLite database tables."""
     cursor = conn.cursor()
@@ -79,6 +95,7 @@ def init_database(conn: sqlite3.Connection):
     cursor.execute(CREATE_INGESTION_JOBS_TABLE)
     cursor.execute(CREATE_FEEDBACK_TABLE)
     cursor.execute(CREATE_QUERY_LOG_TABLE)
+    cursor.execute(CREATE_NOTION_OBJECTS_TABLE)
     
     # Run dynamic migration to add current_stage column to ingestion_jobs if not exists
     try:
@@ -87,6 +104,16 @@ def init_database(conn: sqlite3.Connection):
         try:
             cursor.execute("ALTER TABLE ingestion_jobs ADD COLUMN current_stage TEXT DEFAULT 'queued'")
         except Exception as e:
-            print(f"Migration error: {e}")
+            print(f"Migration error (current_stage): {e}")
+
+    # Run dynamic migration to add failure_reason column to ingestion_jobs if not exists
+    try:
+        cursor.execute("SELECT failure_reason FROM ingestion_jobs LIMIT 1")
+    except sqlite3.OperationalError:
+        try:
+            cursor.execute("ALTER TABLE ingestion_jobs ADD COLUMN failure_reason TEXT")
+        except Exception as e:
+            print(f"Migration error (failure_reason): {e}")
             
     conn.commit()
+

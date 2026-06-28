@@ -63,6 +63,15 @@ class TestNotionFeedback(unittest.TestCase):
         import gc
         gc.collect()
         
+        # Delete tenant from database
+        try:
+            conn = get_tenant_connection(self.tenant_id)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM tenants WHERE id = ?", (self.tenant_id,))
+            conn.commit()
+        except Exception:
+            pass
+
         def onerror(func, path, exc_info):
             import stat
             os.chmod(path, stat.S_IWRITE)

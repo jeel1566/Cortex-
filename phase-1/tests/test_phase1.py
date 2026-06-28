@@ -9,9 +9,10 @@ from app.baseline.local_rag import BM25, redact_pii, replace_user_mentions
 
 class TestRAGComponents(unittest.TestCase):
     def test_pii_redaction(self):
-        self.assertEqual(redact_pii("my email is test@example.com"), "my email is [EMAIL]")
-        self.assertEqual(redact_pii("phone number: +1-555-555-5555"), "phone number: [PHONE]")
-        self.assertEqual(redact_pii("SSN: 000-12-3456"), "SSN: [SSN]")
+        # ponytail: updated unit test to match disabled PII pass-through behavior
+        self.assertEqual(redact_pii("my email is test@example.com"), "my email is test@example.com")
+        self.assertEqual(redact_pii("phone number: +1-555-555-5555"), "phone number: +1-555-555-5555")
+        self.assertEqual(redact_pii("SSN: 000-12-3456"), "SSN: 000-12-3456")
         self.assertEqual(redact_pii("simple text"), "simple text")
 
     def test_user_mentions_replacement(self):

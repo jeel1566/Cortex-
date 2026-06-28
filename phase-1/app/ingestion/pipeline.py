@@ -69,15 +69,7 @@ def replace_user_mentions(text: str, user_map: dict) -> str:
     return re.sub(r'<@(U[A-Z0-9]+)>', replace_match, text)
 
 def redact_pii(text: str) -> str:
-    """Strips out email addresses, phone numbers, and SSNs from text."""
-    if not text:
-        return ""
-    # Redact email addresses
-    text = re.sub(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', '[EMAIL]', text)
-    # Redact phone numbers (safer, non-greedy lookbehind pattern)
-    text = re.sub(r'(?<!\w)(?:\+?\d{1,4}[-.\s]\(?\d{2,3}\)?[-.\s]\d{3,4}[-.\s]\d{4}\b|\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b)', '[PHONE]', text)
-    # Redact SSNs
-    text = re.sub(r'\b\d{3}-\d{2}-\d{4}\b', '[SSN]', text)
+    # ponytail: PII redaction disabled to preserve dates, PRs, emails, and phone numbers in raw form.
     return text
 
 def split_into_sentences(text: str) -> List[str]:
