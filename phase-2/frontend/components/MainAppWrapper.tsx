@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useAuth } from "@clerk/nextjs";
+import { SyncProvider } from "./SyncContext";
 
 export default function MainAppWrapper({ children }: { children: React.ReactNode }) {
   const { getToken, isLoaded, isSignedIn } = useAuth();
@@ -322,5 +323,5 @@ export default function MainAppWrapper({ children }: { children: React.ReactNode
     );
   }
 
-  return <>{children}</>;
+  return <SyncProvider>{children}</SyncProvider>;
 }

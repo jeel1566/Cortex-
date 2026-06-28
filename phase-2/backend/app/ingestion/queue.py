@@ -78,12 +78,27 @@ class IngestionQueueWorker:
                 
                 logger.info("polling_notion", tenant_id=tenant_id, database_id=database_id)
                 
-                client = NotionClient(api_key=notion_config.get("api_key"))
+                api_key = notion_config.get("api_key")
+                # Discover & update metadata registry first
+                from app.ingestion.notion import sync_notion_metadata
+                sync_notion_metadata(tenant_id, api_key)
+
+                client = NotionClient(api_key=api_key)
                 updates = client.fetch_database_updates(database_id, last_polled)
                 
                 if updates:
                     logger.info("notion_updates_found", tenant_id=tenant_id, count=len(updates))
-                    run_ingestion_pipeline(tenant_id, updates)
+                    pages_meta = run_ingestion_pipeline(tenant_id, updates)
+                    
+                    # Update status to 'synced' in notion_objects
+                    for p in pages_meta:
+                        for src in p.get("sources", []):
+                            if src.startswith("notion://page/"):
+                                notion_id = src.split("/")[-1].split("#")[0]
+                                cursor.execute(
+                                    "UPDATE notion_objects SET sync_status = 'synced', last_synced_at = ? WHERE notion_id = ?",
+                                    (datetime.datetime.utcnow().isoformat() + "Z", notion_id)
+                                )
                     
                 # Update last polled time
                 now_str = datetime.datetime.utcnow().isoformat() + "Z"

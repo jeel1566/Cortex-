@@ -197,13 +197,16 @@ class CortexQueryEngine:
 
         context = "\n\n".join(context_blocks)
         prompt = (
-            "You are Cortex, a highly accurate corporate Knowledge OS assistant.\n"
-            "The following are synthesized knowledge pages from the company's knowledge base.\n"
-            "Use ONLY the information in these pages to answer the question.\n"
-            "If the answer is not present, state that honestly.\n\n"
-            "=== KNOWLEDGE PAGES ===\n"
-            f"{context}\n\n"
-            f"Question: {question}\n\n"
+            "You are Cortex, an expert corporate Knowledge OS assistant. Your goal is to answer user queries with 100% factual accuracy, based STRICTLY and ONLY on the provided context.\n\n"
+            "<context>\n"
+            f"{context}\n"
+            "</context>\n\n"
+            "<rules>\n"
+            "1. Rely ONLY on the facts explicitly mentioned in the context. Do not extrapolate, assume, or bring in outside knowledge.\n"
+            "2. If the context does not contain the answer, say 'I do not have enough information in the knowledge pages to answer this question.'\n"
+            "3. Maintain a professional, concise, and direct tone.\n"
+            "</rules>\n\n"
+            f"Question: {question}\n"
             "Answer:"
         )
         try:

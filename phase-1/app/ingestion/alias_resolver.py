@@ -66,23 +66,28 @@ def _regex_extract_aliases(
 
 # ── Phase 2: LLM Validation ─────────────────────────────────────────
 
-VALIDATION_PROMPT = """You are analyzing Slack messages to identify what names a person uses for themselves.
+VALIDATION_PROMPT = """You are a highly precise linguistic annotator. Your goal is to analyze user Slack messages and verify if the candidate aliases refer to the same person.
 
-Official name from company directory: {official_name}
-Candidate aliases found by pattern matching: {candidates}
+Official Directory Name: {official_name}
+Candidate Aliases: {candidates}
 
-Here are the actual messages from this person:
+<messages>
 {messages}
+</messages>
 
-For each candidate alias, respond with a JSON object:
+<instructions>
+1. Check if the candidate aliases are indeed used by the sender to refer to themselves (e.g. self-introduced names, common nicknames).
+2. Look for other self-referred names in the messages that were not in the candidates list.
+3. Respond ONLY with a valid JSON object matching the schema below. Do not include markdown blocks or extra text.
+</instructions>
+
+<schema>
 {{
-  "confirmed_aliases": ["list of names that ARE genuine aliases/nicknames for this person"],
-  "rejected": ["list of names that are NOT aliases (false matches)"],
-  "additional": ["any other names/nicknames you found that were missed"]
+  "confirmed_aliases": ["genuine aliases/nicknames confirmed from the text"],
+  "rejected": ["false positive matches"],
+  "additional": ["newly found names/nicknames used by this person"]
 }}
-
-Only include names the person uses to refer to THEMSELVES. Do not include project names, tool names, or other people's names.
-Respond ONLY with valid JSON. No extra text."""
+</schema>"""
 
 
 def _llm_validate_aliases(

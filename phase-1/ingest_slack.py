@@ -260,7 +260,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Cortex Phase-1 Slack Ingestion Compiler")
     parser.add_argument("--max-messages", type=int, default=0,
                         help="Limit messages ingested (0 = no limit, use all)")
-    parser.add_argument("--batch-size", type=int, default=20,
+    parser.add_argument("--batch-size", type=int, default=150,
                         help="Sentence batch size for LLM classifier calls")
     args = parser.parse_args()
 

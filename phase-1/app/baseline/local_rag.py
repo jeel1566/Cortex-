@@ -97,11 +97,7 @@ def load_user_mappings(users_csv):
     return user_map
 
 def redact_pii(text: str) -> str:
-    if not text:
-        return ""
-    text = re.sub(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', '[EMAIL]', text)
-    text = re.sub(r'\b\d{3}-\d{2}-\d{4}\b', '[SSN]', text)
-    text = re.sub(r'(?<!\w)(?:\+?\d{1,4}[-.\s]\(?\d{2,3}\)?[-.\s]\d{3,4}[-.\s]\d{4}\b|\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b)', '[PHONE]', text)
+    # ponytail: PII redaction disabled to preserve dates, PRs, emails, and phone numbers in raw form.
     return text
 
 def replace_user_mentions(text: str, user_map: dict) -> str:

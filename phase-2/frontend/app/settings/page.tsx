@@ -30,6 +30,8 @@ export default function SettingsPage() {
   const [notionDatabaseId, setNotionDatabaseId] = useState("");
   const [notionApiKey, setNotionApiKey] = useState("");
   const [notionLastPolled, setNotionLastPolled] = useState("");
+  const [notionStatus, setNotionStatus] = useState<any>(null);
+  const [loadingStatus, setLoadingStatus] = useState(false);
 
   // Form states - Slack
   const [slackEnabled, setSlackEnabled] = useState(false);
@@ -105,8 +107,27 @@ export default function SettingsPage() {
     }
   };
 
+  const fetchNotionStatus = async () => {
+    setLoadingStatus(true);
+    try {
+      const token = await getAuthToken();
+      const res = await fetch("http://127.0.0.1:8000/v1/notion/status", {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNotionStatus(data);
+      }
+    } catch (err) {
+      console.error("Error fetching Notion status:", err);
+    } finally {
+      setLoadingStatus(false);
+    }
+  };
+
   useEffect(() => {
     fetchSettings();
+    fetchNotionStatus();
   }, [isLoaded, isSignedIn]);
 
   const pollJobStatus = async (jobId: string, token: string) => {
@@ -138,11 +159,13 @@ export default function SettingsPage() {
             setSyncMessage(`✓ Sync completed! ${data.pages_created} pages created, ${data.pages_updated} pages updated.`);
             clearInterval(intervalId);
             fetchSettings(); // Refresh settings to show new last_polled time
+            fetchNotionStatus();
             setTimeout(() => { setSyncStatus("idle"); setSyncMessage(""); }, 8000);
           } else if (status === "failed") {
             setSyncStatus("error");
-            setSyncMessage("Notion sync failed. Check backend logs or connection settings.");
+            setSyncMessage(data.failure_reason ? `Sync failed: ${data.failure_reason}` : "Notion sync failed. Check backend logs or connection settings.");
             clearInterval(intervalId);
+            fetchNotionStatus();
           } else {
             const displayMsg = stageMap[stage] || `Processing (${stage})...`;
             setSyncMessage(`Job ID: ${jobId} — ${displayMsg}`);
@@ -487,52 +510,50 @@ export default function SettingsPage() {
 
           {/* TAB 2: NOTION CONNECTOR */}
           {activeTab === "notion" && (
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div>
                   <h2 style={{ fontSize: "1.35rem", color: "#fff" }}>Notion Sync Connector</h2>
                   <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", marginTop: "0.25rem" }}>
-                    Polls a Notion database every 5 minutes to ingest modified pages automatically.
+                    Polls a Notion workspace database or pages every 5 minutes to ingest updates automatically.
                   </p>
                 </div>
-                {/* Active switch */}
-                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                   <span style={{ fontSize: "0.85rem", fontWeight: 600, color: notionEnabled ? "var(--success)" : "var(--text-secondary)" }}>
                     {notionEnabled ? "Sync Active" : "Sync Disabled"}
                   </span>
-                  <label style={{ position: "relative", display: "inline-block", width: "48px", height: "24px" }}>
-                    <input 
-                      type="checkbox" 
+                  <label style={{ position: "relative", display: "inline-block", width: "50px", height: "26px", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
                       checked={notionEnabled}
                       onChange={(e) => setNotionEnabled(e.target.checked)}
                       style={{ opacity: 0, width: 0, height: 0 }}
                     />
                     <span style={{
                       position: "absolute",
-                      cursor: "pointer",
-                      inset: 0,
+                      top: 0, left: 0, right: 0, bottom: 0,
                       backgroundColor: notionEnabled ? "var(--accent)" : "#3f3f46",
-                      borderRadius: "24px",
-                      transition: "0.2s",
+                      borderRadius: "34px",
+                      transition: "0.3s",
                       boxShadow: notionEnabled ? "0 0 10px rgba(99, 102, 241, 0.4)" : "none"
                     }}>
                       <span style={{
                         position: "absolute",
                         content: '""',
-                        height: "18px",
-                        width: "18px",
+                        height: "20px", width: "20px",
                         left: notionEnabled ? "26px" : "3px",
                         bottom: "3px",
                         backgroundColor: "#fff",
                         borderRadius: "50%",
-                        transition: "0.2s"
+                        transition: "0.3s"
                       }} />
                     </span>
                   </label>
                 </div>
               </div>
 
-              <div style={{ background: "var(--bg-tertiary)", padding: "2rem", borderRadius: "10px", border: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+              {/* Form settings */}
+              <div style={{ background: "var(--card-bg)", padding: "1.5rem", borderRadius: "12px", border: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: "1.25rem" }}>
                 <div>
                   <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Notion Integration Token (API Key)</label>
                   <input 
@@ -541,10 +562,10 @@ export default function SettingsPage() {
                     onChange={(e) => setNotionApiKey(e.target.value)} 
                     placeholder={notionEnabled ? "Leave unchanged or enter new Notion token" : "Enter integration token (secret_...)"}
                     required={notionEnabled}
-                    style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "#fff" }}
+                    style={{ width: "100%", padding: "0.75rem", background: "var(--input-bg)", border: "1px solid var(--border)", borderRadius: "8px", color: "#fff", fontSize: "0.9rem" }}
                   />
                 </div>
-                
+
                 <div>
                   <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>
                     Notion Database ID <span style={{ color: "#6b7280", fontWeight: 400 }}>(optional)</span>
@@ -553,11 +574,11 @@ export default function SettingsPage() {
                     type="text" 
                     value={notionDatabaseId} 
                     onChange={(e) => setNotionDatabaseId(e.target.value)} 
-                    placeholder="Leave blank to sync ALL pages, notes & docs from your workspace"
-                    style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "#fff" }}
+                    placeholder="Enter specific Database ID (optional)"
+                    style={{ width: "100%", padding: "0.75rem", background: "var(--input-bg)", border: "1px solid var(--border)", borderRadius: "8px", color: "#fff", fontSize: "0.9rem" }}
                   />
-                  <small style={{ display: "block", color: "var(--text-secondary)", fontSize: "0.75rem", marginTop: "0.35rem" }}>
-                    💡 Leave blank to ingest <strong style={{ color: "#a1a1aa" }}>all pages, notes, plans and docs</strong> from your entire Notion workspace. Or paste a specific Database ID to sync only that database.
+                  <small style={{ display: "block", fontSize: "0.75rem", color: "var(--text-secondary)", marginTop: "0.35rem" }}>
+                    💡 Leave blank to ingest <strong style={{ color: "#a1a1aa" }}>all pages, notes, plans and docs</strong> from your entire Notion workspace. Or paste a database ID to sync only that database.
                   </small>
                 </div>
 
@@ -598,12 +619,12 @@ export default function SettingsPage() {
                       fontSize: "0.82rem",
                       background: syncStatus === "done" ? "rgba(16,185,129,0.1)" : "rgba(239,68,68,0.1)",
                       border: `1px solid ${syncStatus === "done" ? "rgba(16,185,129,0.2)" : "rgba(239,68,68,0.2)"}`,
-                      color: syncStatus === "done" ? "var(--success)" : "var(--error)"
+                      color: syncStatus === "done" ? "var(--success)" : "var(--error)",
+                      wordBreak: "break-all"
                     }}>
                       {syncMessage}
                     </div>
                   )}
-
                 </div>
 
                 <div style={{ borderTop: "1px solid var(--border)", paddingTop: "1.25rem", marginTop: "0.5rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -614,6 +635,106 @@ export default function SettingsPage() {
                     {formatDate(notionLastPolled)}
                   </div>
                 </div>
+              </div>
+
+              {/* CONNECTION CHECK & OBJECT REGISTRY INBOX */}
+              <div style={{ background: "var(--card-bg)", padding: "1.5rem", borderRadius: "12px", border: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem" }}>
+                  <div>
+                    <h3 style={{ fontSize: "1.1rem", color: "#fff", fontWeight: 600 }}>Notion Access Check & Object Registry</h3>
+                    <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginTop: "0.15rem" }}>
+                      Scan what workspace documents are visible to the connection integration token.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={fetchNotionStatus}
+                    disabled={loadingStatus}
+                    style={{
+                      padding: "0.5rem 1rem",
+                      background: "transparent",
+                      border: "1px solid var(--border)",
+                      borderRadius: "6px",
+                      color: "var(--text-secondary)",
+                      fontSize: "0.8rem",
+                      cursor: "pointer"
+                    }}
+                  >
+                    {loadingStatus ? "⏳ Refreshing..." : "🔄 Refresh Registry"}
+                  </button>
+                </div>
+
+                {/* Metrics Cards */}
+                {notionStatus && notionStatus.summary && (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "0.75rem" }}>
+                    <div style={{ background: "rgba(99,102,241,0.06)", border: "1px solid rgba(99,102,241,0.15)", borderRadius: "10px", padding: "1rem", textAlign: "center" }}>
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Discovered</div>
+                      <div style={{ fontSize: "1.75rem", color: "var(--accent)", fontWeight: 700, marginTop: "0.25rem" }}>{notionStatus.summary.discovered + notionStatus.summary.synced + notionStatus.summary.failed}</div>
+                    </div>
+                    <div style={{ background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.15)", borderRadius: "10px", padding: "1rem", textAlign: "center" }}>
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Synced</div>
+                      <div style={{ fontSize: "1.75rem", color: "var(--success)", fontWeight: 700, marginTop: "0.25rem" }}>{notionStatus.summary.synced}</div>
+                    </div>
+                    <div style={{ background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.15)", borderRadius: "10px", padding: "1rem", textAlign: "center" }}>
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Failed</div>
+                      <div style={{ fontSize: "1.75rem", color: "var(--error)", fontWeight: 700, marginTop: "0.25rem" }}>{notionStatus.summary.failed}</div>
+                    </div>
+                    <div style={{ background: "rgba(156,163,175,0.06)", border: "1px solid rgba(156,163,175,0.15)", borderRadius: "10px", padding: "1rem", textAlign: "center" }}>
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Empty/Skipped</div>
+                      <div style={{ fontSize: "1.75rem", color: "#9ca3af", fontWeight: 700, marginTop: "0.25rem" }}>{notionStatus.summary.empty + notionStatus.summary.inaccessible}</div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Registry Object List */}
+                {notionStatus && notionStatus.objects && notionStatus.objects.length > 0 ? (
+                  <div style={{ maxHeight: "250px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "8px" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem", textAlign: "left" }}>
+                      <thead>
+                        <tr style={{ background: "var(--card-bg)", borderBottom: "1px solid var(--border)" }}>
+                          <th style={{ padding: "0.6rem", color: "var(--text-secondary)" }}>Title</th>
+                          <th style={{ padding: "0.6rem", color: "var(--text-secondary)" }}>Type</th>
+                          <th style={{ padding: "0.6rem", color: "var(--text-secondary)" }}>Sync Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {notionStatus.objects.map((obj: any) => (
+                          <tr key={obj.notion_id} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
+                            <td style={{ padding: "0.6rem" }}>
+                              <a href={obj.url} target="_blank" rel="noreferrer" style={{ color: "#fff", textDecoration: "underline", fontWeight: 500 }}>
+                                {obj.title}
+                              </a>
+                            </td>
+                            <td style={{ padding: "0.6rem", color: "var(--text-secondary)" }}>
+                              {obj.type}
+                            </td>
+                            <td style={{ padding: "0.6rem" }}>
+                              <span style={{
+                                padding: "0.15rem 0.4rem",
+                                borderRadius: "4px",
+                                fontSize: "0.7rem",
+                                fontWeight: 600,
+                                background: obj.sync_status === "synced" ? "rgba(16,185,129,0.15)" : obj.sync_status === "failed" ? "rgba(239,68,68,0.15)" : "rgba(59,130,246,0.15)",
+                                color: obj.sync_status === "synced" ? "var(--success)" : obj.sync_status === "failed" ? "var(--error)" : "var(--accent)"
+                              }}>
+                                {obj.sync_status.toUpperCase()}
+                              </span>
+                              {obj.error_message && (
+                                <div style={{ fontSize: "0.7rem", color: "var(--error)", marginTop: "0.2rem" }}>
+                                  {obj.error_message}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div style={{ padding: "2rem", textAlign: "center", border: "1px dashed var(--border)", borderRadius: "8px", color: "var(--text-secondary)", fontSize: "0.85rem" }}>
+                    ℹ️ No objects discovered yet. Save credentials and run a Sync to fetch accessible items.
+                  </div>
+                )}
               </div>
             </div>
           )}

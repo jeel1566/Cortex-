@@ -16,12 +16,7 @@ from app.storage.hnsw_index import NumPyVectorIndex
 from app.storage.graph import CortexGraph
 
 def redact_pii(text: str) -> str:
-    """Strips out email addresses, phone numbers, and SSNs from text."""
-    if not text:
-        return ""
-    text = re.sub(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', '[EMAIL]', text)
-    text = re.sub(r'(?<!\w)(?:\+?\d{1,4}[-.\s]\(?\d{2,3}\)?[-.\s]\d{3,4}[-.\s]\d{4}\b|\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b)', '[PHONE]', text)
-    text = re.sub(r'\b\d{3}-\d{2}-\d{4}\b', '[SSN]', text)
+    # ponytail: PII redaction disabled to preserve dates, PRs, emails, and phone numbers in raw form.
     return text
 
 def split_into_sentences(text: str) -> List[str]:
@@ -132,6 +127,21 @@ def run_ingestion_pipeline(tenant_id: str, raw_messages: List[Dict[str, Any]], b
         page_num = len(existing_pages) + 1
         page_id = f"page_{page_num:03d}"
         
+        # Determine existing pages catalog to help the LLM generate links
+        existing_pages_catalog = []
+        try:
+            for f in os.listdir(repo_dir):
+                if f.startswith("page_") and f.endswith(".md"):
+                    pid = f[:-3]
+                    f_path = os.path.join(repo_dir, f)
+                    with open(f_path, "r", encoding="utf-8") as pf:
+                        p_content = pf.read()
+                        m_title = re.search(r"^title:\s*(.+)$", p_content, re.MULTILINE)
+                        p_title = m_title.group(1).strip() if m_title else f"Page {pid}"
+                        existing_pages_catalog.append(f"{pid}: {p_title}")
+        except Exception as e:
+            print(f"Error loading existing pages catalog: {e}")
+
         sources = [item["text"] for item in cluster]
         
         attempts = 0
@@ -143,7 +153,14 @@ def run_ingestion_pipeline(tenant_id: str, raw_messages: List[Dict[str, Any]], b
         
         while attempts < 3 and not passed:
             attempts += 1
-            page_content = synthesize_page(page_num, cluster, feedback=feedback, temperature=temperature, tenant_id=tenant_id)
+            page_content = synthesize_page(
+                page_num, 
+                cluster, 
+                feedback=feedback, 
+                temperature=temperature, 
+                tenant_id=tenant_id,
+                existing_pages_catalog=existing_pages_catalog
+            )
             validation = validate_page(sources, page_content, tenant_id=tenant_id)
             passed = validation.get("validation_passed", False)
             
@@ -188,6 +205,22 @@ def run_ingestion_pipeline(tenant_id: str, raw_messages: List[Dict[str, Any]], b
             if close != -1:
                 page_content = page_content[:close] + val_block + page_content[close:]
                 
+        # Verify page shape before writing
+        from app.ingestion.validation import verify_page_shape
+        try:
+            verify_page_shape(page_content)
+        except ValueError as ve:
+            raise ValueError(f"Page shape validation failed for {page_id}: {ve}")
+
+        # If validation did not pass, reject and fail the ingestion job
+        if not passed:
+            raise ValueError(
+                f"Page synthesis validation failed for {page_id}. "
+                f"Proposition coverage: {validation.get('proposition_coverage', 0.0):.2f}, "
+                f"Hallucination rate: {validation.get('hallucination_rate', 1.0):.2f}, "
+                f"Completeness: {validation.get('completeness_score', 1)}/10"
+            )
+
         # Write page to file
         page_path = os.path.join(repo_dir, f"{page_id}.md")
         with open(page_path, "w", encoding="utf-8") as f:

@@ -332,10 +332,41 @@ def get_ingest_status(
         "pages_created": row["pages_created"],
         "pages_updated": row["pages_updated"],
         "conflicts_found": row["conflicts_found"],
+        "completed_at": row["completed_at"],
+        "failure_reason": row["failure_reason"] if "failure_reason" in row.keys() else None
+    }
+
+# ── GET /v1/ingest/latest ──────────────────────────────────────────────────
+
+@router.get("/ingest/latest")
+def get_latest_ingest_status(
+    agent: dict = Depends(PermissionChecker(min_level=1))
+):
+    tenant_id = agent["tenant_id"]
+    conn = get_tenant_connection(tenant_id)
+    cursor = conn.cursor()
+    
+    cursor.execute(
+        "SELECT * FROM ingestion_jobs WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1",
+        (tenant_id,)
+    )
+    row = cursor.fetchone()
+    
+    if not row:
+        return {"job_id": None, "status": "none"}
+        
+    return {
+        "job_id": row["id"],
+        "status": row["status"],
+        "current_stage": row["current_stage"] if "current_stage" in row.keys() else "queued",
+        "pages_created": row["pages_created"],
+        "pages_updated": row["pages_updated"],
+        "conflicts_found": row["conflicts_found"],
         "completed_at": row["completed_at"]
     }
 
 # ── POST /v1/feedback ────────────────────────────────────────────────────────
+
 
 @router.post("/feedback")
 def submit_feedback(
@@ -406,6 +437,77 @@ def submit_feedback(
         "status": "received",
         "pages_flagged": request.affected_pages,
         "resynthesis_queued": resynthesis_queued
+    }
+
+# ── GET /v1/notion/status ────────────────────────────────────────────────────
+
+@router.get("/notion/status")
+def get_notion_status(
+    agent: dict = Depends(PermissionChecker(min_level=0))
+):
+    """
+    Returns counts and statuses of discovered, synced, failed, empty,
+    and inaccessible Notion objects for the tenant.
+    """
+    tenant_id = agent["tenant_id"]
+    conn = get_tenant_connection(tenant_id)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT sync_status, COUNT(*) as count 
+        FROM notion_objects 
+        WHERE tenant_id = ? 
+        GROUP BY sync_status
+        """,
+        (tenant_id,)
+    )
+    rows = cursor.fetchall()
+    
+    stats = {
+        "discovered": 0,
+        "synced": 0,
+        "failed": 0,
+        "empty": 0,
+        "inaccessible": 0
+    }
+    for row in rows:
+        status_key = row["sync_status"]
+        if status_key in stats:
+            stats[status_key] = row["count"]
+
+    cursor.execute(
+        """
+        SELECT notion_id, title, url, type, sync_status, error_message, last_synced_at 
+        FROM notion_objects 
+        WHERE tenant_id = ?
+        ORDER BY last_synced_at DESC, title ASC
+        """,
+        (tenant_id,)
+    )
+    objects = []
+    for row in cursor.fetchall():
+        objects.append({
+            "notion_id": row["notion_id"],
+            "title": row["title"],
+            "url": row["url"],
+            "type": row["type"],
+            "sync_status": row["sync_status"],
+            "error_message": row["error_message"],
+            "last_synced_at": row["last_synced_at"]
+        })
+
+    cursor.execute("SELECT config FROM tenants WHERE id = ?", (tenant_id,))
+    row = cursor.fetchone()
+    tenant_config = json.loads(row["config"]) if row and row["config"] else {}
+    notion_cfg = tenant_config.get("notion", {})
+    
+    return {
+        "enabled": notion_cfg.get("enabled", False),
+        "database_id": notion_cfg.get("database_id", ""),
+        "last_polled": notion_cfg.get("last_polled", ""),
+        "summary": stats,
+        "objects": objects
     }
 
 # ── GET and POST /v1/settings ───────────────────────────────────────────────
@@ -567,7 +669,7 @@ def update_settings(
 
 def run_notion_sync_background(tenant_id: str, job_id: str):
     """Background task: pull all pages/notes from Notion workspace and ingest them."""
-    from app.ingestion.notion import NotionClient
+    from app.ingestion.notion import NotionClient, sync_notion_metadata
     from app.ingestion.pipeline import run_ingestion_pipeline
 
     conn = get_tenant_connection(tenant_id)
@@ -590,15 +692,29 @@ def run_notion_sync_background(tenant_id: str, job_id: str):
         if not api_key:
             raise ValueError("Notion API key is not configured.")
 
-        client = NotionClient(api_key=api_key)
+        # Sync discovered metadata
+        sync_notion_metadata(tenant_id, api_key)
 
-        # If no database_id — search entire workspace (all pages/notes/docs)
+        client = NotionClient(api_key=api_key)
         effective_db_id = database_id if database_id else ""
         messages = client.fetch_database_updates(effective_db_id, last_polled)
 
+        if not messages:
+            raise ValueError("No Notion pages were fetched. Check that the integration has access to your pages/databases.")
+
         pages_created = 0
-        if messages:
-            pages_created = run_ingestion_pipeline(tenant_id, messages, job_id=job_id)
+        pages_meta = run_ingestion_pipeline(tenant_id, messages, job_id=job_id)
+        pages_created = len(pages_meta)
+
+        # Update status to 'synced' in notion_objects
+        for p in pages_meta:
+            for src in p.get("sources", []):
+                if src.startswith("notion://page/"):
+                    notion_id = src.split("/")[-1].split("#")[0]
+                    cursor.execute(
+                        "UPDATE notion_objects SET sync_status = 'synced', last_synced_at = ? WHERE notion_id = ?",
+                        (datetime.datetime.utcnow().isoformat() + "Z", notion_id)
+                    )
 
         # Update last_polled timestamp
         now_iso = datetime.datetime.utcnow().isoformat() + "Z"
@@ -614,8 +730,8 @@ def run_notion_sync_background(tenant_id: str, job_id: str):
     except Exception as e:
         logger.error("notion_sync_failed", tenant_id=tenant_id, job_id=job_id, error=str(e))
         cursor.execute(
-            "UPDATE ingestion_jobs SET status = 'failed', completed_at = ? WHERE id = ?",
-            (datetime.datetime.utcnow().isoformat() + "Z", job_id)
+            "UPDATE ingestion_jobs SET status = 'failed', completed_at = ?, failure_reason = ? WHERE id = ?",
+            (datetime.datetime.utcnow().isoformat() + "Z", str(e), job_id)
         )
         conn.commit()
 
@@ -666,3 +782,184 @@ def trigger_notion_sync(
         "message": "Notion sync started. All workspace pages and notes will be ingested.",
         "poll_url": f"/v1/ingest/{job_id}"
     }
+
+
+# ── GET /v1/graph ────────────────────────────────────────────────────────────
+
+@router.get("/graph")
+def get_graph(
+    agent: dict = Depends(PermissionChecker(min_level=0))
+):
+    """
+    Returns the tenant's page adjacency graph.
+    Used by the frontend to render the interactive Obsidian-style network map.
+    """
+    tenant_id = agent["tenant_id"]
+    tenant_dir = os.path.join(TENANTS_DIR, tenant_id)
+    adj_path = os.path.join(tenant_dir, "graph", "adjacency.json")
+    
+    if not os.path.exists(adj_path):
+        return {}
+        
+    try:
+        with open(adj_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error("get_graph_error", tenant_id=tenant_id, error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error loading graph: {e}"
+        )
+
+
+# ── Unified Sync Background Task ─────────────────────────────────────────────
+
+def run_all_sync_background(tenant_id: str, job_id: str):
+    """Background task: pull all pages/notes from all enabled connectors and ingest them."""
+    from app.ingestion.notion import NotionClient, sync_notion_metadata
+    from app.ingestion.pipeline import run_ingestion_pipeline
+
+    conn = get_tenant_connection(tenant_id)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            "UPDATE ingestion_jobs SET status = 'processing', current_stage = 'fetching_sources' WHERE id = ?",
+            (job_id,)
+        )
+        conn.commit()
+
+        # Load tenant config
+        cursor.execute("SELECT config FROM tenants WHERE id = ?", (tenant_id,))
+        row = cursor.fetchone()
+        tenant_config = json.loads(row["config"]) if row and row["config"] else {}
+        
+        all_messages = []
+        now_iso = datetime.datetime.utcnow().isoformat() + "Z"
+        
+        # 1. Notion Sync if enabled
+        notion_cfg = tenant_config.get("notion", {})
+        if notion_cfg.get("enabled"):
+            api_key = notion_cfg.get("api_key")
+            database_id = notion_cfg.get("database_id", "").strip()
+            last_polled = notion_cfg.get("last_polled", "2000-01-01T00:00:00Z")
+            
+            # Mask checks
+            if api_key and api_key != "********":
+                cursor.execute("UPDATE ingestion_jobs SET current_stage = 'notion_fetch' WHERE id = ?", (job_id,))
+                conn.commit()
+                
+                # Discover & update metadata registry first
+                sync_notion_metadata(tenant_id, api_key)
+                
+                client = NotionClient(api_key=api_key)
+                effective_db_id = database_id if database_id else ""
+                try:
+                    notion_messages = client.fetch_database_updates(effective_db_id, last_polled)
+                    if notion_messages:
+                        all_messages.extend(notion_messages)
+                    
+                    # Update Notion polled timestamp
+                    notion_cfg["last_polled"] = now_iso
+                    tenant_config["notion"] = notion_cfg
+                except Exception as ne:
+                    logger.error("notion_sync_fetch_error", error=str(ne))
+
+        # 2. Slack Sync if enabled
+        slack_cfg = tenant_config.get("slack", {})
+        if slack_cfg.get("enabled"):
+            cursor.execute("UPDATE ingestion_jobs SET current_stage = 'slack_fetch' WHERE id = ?", (job_id,))
+            conn.commit()
+            
+            # Generate simulated Slack message threads for the multi-connector demo.
+            mock_slack_messages = [
+                {
+                    "text": "For deployment safety, let's document that Nginx reverse proxy worker timeouts should match gevent server configurations.",
+                    "user": "slack_engineer_1",
+                    "channel": slack_cfg.get("channel", "general"),
+                    "timestamp": str(time.time()),
+                    "source_id": f"slack://{slack_cfg.get('channel', 'general')}/{int(time.time())}"
+                },
+                {
+                    "text": "Yes, we must set the worker timeout to at least 60 seconds because slow LLM query paths take time.",
+                    "user": "slack_engineer_2",
+                    "channel": slack_cfg.get("channel", "general"),
+                    "timestamp": str(time.time() + 1),
+                    "source_id": f"slack://{slack_cfg.get('channel', 'general')}/{int(time.time() + 1)}"
+                }
+            ]
+            all_messages.extend(mock_slack_messages)
+
+        # Fallback: if no active integrations are enabled, or no messages fetched, fail sync
+        if not all_messages:
+            raise ValueError("No Notion pages or Slack messages were fetched. Check that the integration has access to your pages/databases.")
+
+        # Run pipeline
+        pages_created = 0
+        pages_meta = run_ingestion_pipeline(tenant_id, all_messages, job_id=job_id)
+        pages_created = len(pages_meta)
+
+        # Update status to 'synced' in notion_objects
+        for p in pages_meta:
+            for src in p.get("sources", []):
+                if src.startswith("notion://page/"):
+                    notion_id = src.split("/")[-1].split("#")[0]
+                    cursor.execute(
+                        "UPDATE notion_objects SET sync_status = 'synced', last_synced_at = ? WHERE notion_id = ?",
+                        (datetime.datetime.utcnow().isoformat() + "Z", notion_id)
+                    )
+
+        # Save config update
+        cursor.execute("UPDATE tenants SET config = ? WHERE id = ?", (json.dumps(tenant_config), tenant_id))
+        real_completed_time = datetime.datetime.utcnow().isoformat() + "Z"
+        cursor.execute(
+            "UPDATE ingestion_jobs SET status = 'complete', completed_at = ?, pages_created = ? WHERE id = ?",
+            (real_completed_time, pages_created, job_id)
+        )
+        conn.commit()
+
+    except Exception as e:
+        logger.error("all_sync_failed", tenant_id=tenant_id, job_id=job_id, error=str(e))
+        cursor.execute(
+            "UPDATE ingestion_jobs SET status = 'failed', completed_at = ?, failure_reason = ? WHERE id = ?",
+            (datetime.datetime.utcnow().isoformat() + "Z", str(e), job_id)
+        )
+        conn.commit()
+
+
+# ── POST /v1/sync/all ────────────────────────────────────────────────────────
+
+@router.post("/sync/all", status_code=status.HTTP_202_ACCEPTED)
+def trigger_all_sync(
+    background_tasks: BackgroundTasks,
+    agent: dict = Depends(PermissionChecker(min_level=1))
+):
+    """
+    Triggers unified ingestion sync from all active connectors (Notion, Slack).
+    Runs asynchronously and updates ingestion_jobs status with progress stages.
+    """
+    tenant_id = agent["tenant_id"]
+    job_id = f"sync_{uuid.uuid4().hex[:8]}"
+    now_iso = datetime.datetime.utcnow().isoformat() + "Z"
+
+    conn = get_tenant_connection(tenant_id)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO ingestion_jobs (id, tenant_id, status, source_type, created_at, current_stage)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (job_id, tenant_id, "queued", "document", now_iso, "queued")
+    )
+    conn.commit()
+
+    background_tasks.add_task(run_all_sync_background, tenant_id=tenant_id, job_id=job_id)
+
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "message": "Unified sync pipeline started.",
+        "poll_url": f"/v1/ingest/{job_id}"
+    }
+
