@@ -19,12 +19,16 @@ export default function RootLayout({
         <ClerkProvider>
           {/* Centered Premium Login Screen if Signed Out */}
           <SignedOut>
-            <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center", background: "#09090b" }}>
-              <div style={{ width: "100%", maxWidth: "440px", padding: "2.5rem", background: "var(--bg-secondary)", borderRadius: "16px", border: "1px solid var(--border)", boxShadow: "0 20px 50px rgba(0,0,0,0.6)" }}>
-                <div style={{ textAlign: "center", marginBottom: "2rem" }}>
-                  <div style={{ display: "inline-block", width: "16px", height: "16px", borderRadius: "50%", background: "linear-gradient(135deg, #818cf8, #6366f1)", boxShadow: "0 0 16px var(--accent)", marginBottom: "1rem" }}></div>
-                  <h1 style={{ fontSize: "2rem", fontWeight: 700, color: "#fff", fontFamily: "var(--font-display)", letterSpacing: "-0.03em" }}>Cortex OS</h1>
-                  <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem", marginTop: "0.25rem" }}>Knowledge Operating System for Enterprises</p>
+            <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center", background: "var(--bg-primary)" }}>
+              <div style={{ width: "100%", maxWidth: "440px", padding: "3rem 2.5rem", background: "var(--bg-secondary)", borderRadius: "16px", border: "1px solid var(--border)", boxShadow: "0 20px 50px rgba(0,0,0,0.5)" }}>
+                <div style={{ textAlign: "center", marginBottom: "2.5rem", display: "flex", flexDirection: "column", alignItems: "center" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "5px", width: "36px", marginBottom: "1rem" }}>
+                    <div style={{ height: "4px", backgroundColor: "var(--accent)" }}></div>
+                    <div style={{ height: "4px", backgroundColor: "var(--accent)" }}></div>
+                    <div style={{ height: "4px", backgroundColor: "var(--accent)" }}></div>
+                  </div>
+                  <h1 style={{ fontSize: "2.25rem", fontWeight: 500, color: "var(--text-primary)", fontFamily: "var(--font-display)", letterSpacing: "0.05em", textTransform: "uppercase" }}>Cortex</h1>
+                  <span className="logo-subtitle" style={{ marginTop: "0.25rem" }}>Knowledge OS</span>
                 </div>
                 <SignIn routing="hash" />
               </div>
@@ -35,11 +39,16 @@ export default function RootLayout({
           <SignedIn>
             <div className="layout-container">
               <aside className="sidebar">
-                <div className="logo-section">
-                  <span className="logo-dot"></span>
-                  <span>Cortex OS</span>
+                <div className="logo-section" style={{ paddingBottom: "1.5rem", borderBottom: "1px solid var(--border)" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px", width: "40px", marginBottom: "0.75rem" }}>
+                    <div style={{ height: "5px", backgroundColor: "var(--accent)" }}></div>
+                    <div style={{ height: "5px", backgroundColor: "var(--accent)" }}></div>
+                    <div style={{ height: "5px", backgroundColor: "var(--accent)" }}></div>
+                  </div>
+                  <span>Cortex</span>
+                  <span className="logo-subtitle">Knowledge OS</span>
                 </div>
-                <nav style={{ marginTop: "2rem" }}>
+                <nav style={{ marginTop: "1rem" }}>
                   <ul className="nav-links">
                     <li className="nav-item">
                       <a href="/">Dashboard</a>

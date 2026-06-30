@@ -2,17 +2,28 @@
 
 import React, { useState, useEffect } from "react";
 import { useAuth } from "@clerk/nextjs";
-import { useSync } from "../components/SyncContext";
 
 export default function DashboardPage() {
   const { getToken, isLoaded, isSignedIn } = useAuth();
   const [loading, setLoading] = useState(true);
+  
+  // Dashboard states
   const [pagesCount, setPagesCount] = useState(0);
   const [activeSources, setActiveSources] = useState(0);
   const [notionEnabled, setNotionEnabled] = useState(false);
   const [slackEnabled, setSlackEnabled] = useState(false);
 
-  const { syncing, syncStage, syncStatus, syncPagesCreated, syncError, startSync } = useSync();
+  // Ingestion syncing states
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
+  const [syncStatus, setSyncStatus] = useState<"idle" | "running" | "done" | "error">("idle");
+
+  // Query states
+  const [question, setQuestion] = useState("");
+  const [queryDepartment, setQueryDepartment] = useState("Engineering");
+  const [queryClearance, setQueryClearance] = useState("team");
+  const [queryResult, setQueryResult] = useState<any>(null);
+  const [queryLoading, setQueryLoading] = useState(false);
 
   const getAuthToken = async () => {
     if (process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
@@ -23,7 +34,6 @@ export default function DashboardPage() {
         console.warn("Clerk token acquisition failed, using fallback.", e);
       }
     }
-    // Fallback base64 mock token (represents tenant_a L5 Admin)
     const mockPayload = { tenant_id: "tenant_a", authority_level: 5, name: "Admin (Mock Tenant)" };
     return btoa(JSON.stringify(mockPayload));
   };
@@ -32,7 +42,6 @@ export default function DashboardPage() {
     try {
       const token = await getAuthToken();
       
-      // 1. Fetch total pages count
       const pagesRes = await fetch("http://127.0.0.1:8000/v1/pages", {
         headers: { "Authorization": `Bearer ${token}` }
       });
@@ -42,7 +51,6 @@ export default function DashboardPage() {
         setPagesCount(realPages.length);
       }
 
-      // 2. Fetch settings to determine active sync sources
       const settingsRes = await fetch("http://127.0.0.1:8000/v1/settings", {
         headers: { "Authorization": `Bearer ${token}` }
       });
@@ -74,44 +82,105 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchDashboardMetrics();
-
-    const handleSyncComplete = () => {
-      fetchDashboardMetrics();
-    };
-    window.addEventListener("cortex-sync-completed", handleSyncComplete);
-    return () => {
-      window.removeEventListener("cortex-sync-completed", handleSyncComplete);
-    };
   }, [isLoaded, isSignedIn]);
 
-  const getStageLabel = (stage: string) => {
-    const stages: Record<string, string> = {
-      "initiating": "Initiating connection...",
-      "queued": "Awaiting resource queue...",
-      "fetching_sources": "Scanning enabled connectors...",
-      "notion_fetch": "Fetching documents from Notion workspace...",
-      "slack_fetch": "Retrieving threads from active Slack channels...",
-      "sample_sync": "Ingesting fallback demo metadata...",
-      "pii_redaction": "Redacting PII and filtering raw data logs...",
-      "sentence_splitting": "Decomposing block text into propositions...",
-      "speech_act_classification": "Running speech act classification model...",
-      "sentence_clustering": "Clustering propositions into core decision units...",
-      "page_synthesis": "Synthesizing and re-validating Markdown pages...",
-      "graph_indexing": "Mapping relationships into Knowledge Graph...",
-      "complete": "Pipeline execution successful!"
-    };
-    return stages[stage] || `Running task: ${stage}`;
+  const triggerSyncAll = async () => {
+    setSyncing(true);
+    setSyncStatus("running");
+    setSyncMessage("Starting Notion sync connector...");
+    
+    try {
+      const token = await getAuthToken();
+      
+      // Start Notion
+      let notionJobId = null;
+      if (notionEnabled) {
+        const notionRes = await fetch("http://127.0.0.1:8000/v1/connectors/notion/sync", {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (notionRes.ok) {
+          const notionData = await notionRes.json();
+          notionJobId = notionData.job_id;
+        }
+      }
+      
+      // Start Slack
+      let slackJobId = null;
+      if (slackEnabled) {
+        const slackRes = await fetch("http://127.0.0.1:8000/v1/connectors/slack/sync", {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (slackRes.ok) {
+          const slackData = await slackRes.json();
+          slackJobId = slackData.job_id;
+        }
+      }
+
+      setSyncStatus("done");
+      setSyncMessage("Sync triggered for enabled connectors in the background!");
+      fetchDashboardMetrics();
+      setTimeout(() => {
+        setSyncing(false);
+        setSyncStatus("idle");
+        setSyncMessage("");
+      }, 5000);
+    } catch (e) {
+      setSyncStatus("error");
+      setSyncMessage("Error connecting to backend compiler.");
+      setSyncing(false);
+    }
   };
 
-  const getProgressPercentage = (stage: string) => {
-    const order = [
-      "queued", "fetching_sources", "notion_fetch", "slack_fetch", "sample_sync",
-      "pii_redaction", "sentence_splitting", "speech_act_classification",
-      "sentence_clustering", "page_synthesis", "graph_indexing", "complete"
-    ];
-    const idx = order.indexOf(stage);
-    if (idx === -1) return 5;
-    return Math.round(((idx + 1) / order.length) * 100);
+  const handleQuery = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!question.trim()) return;
+
+    setQueryLoading(true);
+    setQueryResult(null);
+
+    // Map query clearance level to index number for permission checks
+    const clearanceMap: Record<string, number> = {
+      "public": 0,
+      "team": 1,
+      "confidential": 2,
+      "restricted": 3
+    };
+    const authorityLevel = clearanceMap[queryClearance] ?? 1;
+
+    try {
+      // Setup payload representing the requesting agent authority & department
+      const mockPayload = {
+        tenant_id: "tenant_a",
+        authority_level: authorityLevel,
+        department: queryDepartment,
+        role: "member",
+        name: "Mock Agent Context"
+      };
+      const token = btoa(JSON.stringify(mockPayload));
+
+      const res = await fetch("http://127.0.0.1:8000/v1/query", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ question: question })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setQueryResult(data);
+      } else {
+        alert("Query failed to run on backend.");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Error connecting to query engine.");
+    } finally {
+      setQueryLoading(false);
+    }
   };
 
   if (loading) {
@@ -129,8 +198,9 @@ export default function DashboardPage() {
   return (
     <div>
       <h1 className="header-title">Cortex Dashboard</h1>
-      <p className="header-subtitle">Welcome back. Monitoring corporate Knowledge OS metrics.</p>
+      <p className="header-subtitle">Knowledge Operating System monitor & permission-aware compiler client.</p>
 
+      {/* Metric counters */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "1.5rem", marginBottom: "3rem" }}>
         <div className="card">
           <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: "0.5rem" }}>
@@ -142,121 +212,177 @@ export default function DashboardPage() {
         </div>
         <div className="card">
           <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: "0.5rem" }}>
-            Approval Queue Size
-          </div>
-          <div style={{ fontSize: "2.5rem", fontWeight: 700, fontFamily: "var(--font-display)", color: "var(--warning)" }}>
-            0 Pending
-          </div>
-        </div>
-        <div className="card">
-          <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: "0.5rem" }}>
-            Active Synced Sources
+            Active Target Sources
           </div>
           <div style={{ fontSize: "2.5rem", fontWeight: 700, fontFamily: "var(--font-display)", color: "var(--accent)" }}>
             {activeSources} {activeSources === 1 ? "Source" : "Sources"}
           </div>
         </div>
+        <div className="card">
+          <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: "0.5rem" }}>
+            Notion & Slack Status
+          </div>
+          <div style={{ fontSize: "1.1rem", fontWeight: 600, marginTop: "0.5rem", color: "var(--text-primary)" }}>
+            Notion: {notionEnabled ? "Active" : "Off"} | Slack: {slackEnabled ? "Active" : "Off"}
+          </div>
+        </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2rem", marginBottom: "3rem", alignItems: "start" }}>
-        {/* Sync Pipeline Card */}
+      {/* Main Dashboard Rows */}
+      <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: "2rem", alignItems: "start", marginBottom: "3rem" }}>
+        
+        {/* LEFT COLUMN: KNOWLEDGE OS SECURE SEARCH */}
         <div className="card" style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
           <div>
-            <h2 style={{ fontSize: "1.35rem", marginBottom: "0.25rem" }}>Live Ingestion Pipeline</h2>
-            <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Trigger and monitor unified compilation across all connector integrations.</p>
+            <h2 style={{ fontSize: "1.5rem" }}>Trusted Knowledge OS Search</h2>
+            <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", marginTop: "0.15rem" }}>
+              Verify credential-based redaction and proposition coverage.
+            </p>
           </div>
 
-          {/* Connectors Status Indicator */}
-          <div style={{ display: "flex", gap: "1rem" }}>
-            <div style={{ flex: 1, backgroundColor: "rgba(255,255,255,0.02)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.75rem 1rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>Notion Sync</span>
-              <span style={{ fontSize: "0.75rem", fontWeight: 600, color: notionEnabled ? "var(--success)" : "var(--text-secondary)" }}>
-                {notionEnabled ? "● Enabled" : "○ Disabled"}
-              </span>
-            </div>
-            <div style={{ flex: 1, backgroundColor: "rgba(255,255,255,0.02)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.75rem 1rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>Slack Connector</span>
-              <span style={{ fontSize: "0.75rem", fontWeight: 600, color: slackEnabled ? "var(--success)" : "var(--text-secondary)" }}>
-                {slackEnabled ? "● Enabled" : "○ Disabled"}
-              </span>
-            </div>
-          </div>
-
-          <div style={{ borderTop: "1px solid var(--border)", paddingTop: "1.25rem" }}>
-            {syncing ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.85rem" }}>
-                  <span style={{ color: "var(--accent)", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                    <div style={{ width: "12px", height: "12px", border: "2px solid transparent", borderTopColor: "var(--accent)", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-                    {getStageLabel(syncStage)}
-                  </span>
-                  <span style={{ color: "var(--text-secondary)" }}>{getProgressPercentage(syncStage)}%</span>
-                </div>
-                
-                {/* Progress Bar Container */}
-                <div style={{ width: "100%", height: "6px", backgroundColor: "rgba(255,255,255,0.05)", borderRadius: "3px", overflow: "hidden" }}>
-                  <div 
-                    style={{ 
-                      width: `${getProgressPercentage(syncStage)}%`, 
-                      height: "100%", 
-                      background: "linear-gradient(90deg, var(--accent) 0%, #818cf8 100%)", 
-                      borderRadius: "3px",
-                      transition: "width 0.4s ease-out",
-                      boxShadow: "0 0 8px var(--accent)"
-                    }} 
-                  />
-                </div>
-                <style dangerouslySetInnerHTML={{ __html: `@keyframes spin { to { transform: rotate(360deg); } }` }} />
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-                <button 
-                  className="btn btn-primary" 
-                  onClick={startSync} 
-                  style={{ width: "100%", padding: "0.9rem" }}
+          <form onSubmit={handleQuery} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            {/* Context Filters */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.35rem" }}>Requesting Department</label>
+                <select 
+                  value={queryDepartment} 
+                  onChange={(e) => setQueryDepartment(e.target.value)}
+                  style={{ width: "100%", padding: "0.6rem", background: "var(--bg-tertiary)", border: "1px solid var(--border)", borderRadius: "6px", color: "#fff" }}
                 >
-                  Sync All Connectors
-                </button>
+                  <option value="Engineering">Engineering</option>
+                  <option value="Sales">Sales</option>
+                  <option value="HR">Human Resources (HR)</option>
+                  <option value="Finance">Finance</option>
+                </select>
+              </div>
+              
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.35rem" }}>Clearance Level</label>
+                <select 
+                  value={queryClearance} 
+                  onChange={(e) => setQueryClearance(e.target.value)}
+                  style={{ width: "100%", padding: "0.6rem", background: "var(--bg-tertiary)", border: "1px solid var(--border)", borderRadius: "6px", color: "#fff" }}
+                >
+                  <option value="public">Public</option>
+                  <option value="team">Team (Standard)</option>
+                  <option value="confidential">Confidential</option>
+                  <option value="restricted">Restricted (L5 Admin)</option>
+                </select>
+              </div>
+            </div>
 
-                {syncPagesCreated !== null && (
-                  <div style={{ fontSize: "0.85rem", color: "var(--success)", backgroundColor: "rgba(16,185,129,0.05)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: "8px", padding: "0.75rem 1rem", textAlign: "center" }}>
-                    ✨ Ingestion successful! Compiled and committed <strong>{syncPagesCreated}</strong> new markdown pages to Git repository.
-                  </div>
-                )}
+            {/* Input & button */}
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <input 
+                type="text" 
+                placeholder="Ask corporate knowledge base (e.g. What is our target NPS?)..." 
+                value={question} 
+                onChange={(e) => setQuestion(e.target.value)}
+                style={{ flex: 1, padding: "0.75rem 1rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "#fff" }}
+              />
+              <button type="submit" disabled={queryLoading} className="btn btn-primary" style={{ padding: "0 1.5rem" }}>
+                {queryLoading ? "Searching..." : "Query"}
+              </button>
+            </div>
+          </form>
 
-                {syncError && (
-                  <div style={{ fontSize: "0.85rem", color: "var(--error)", backgroundColor: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: "8px", padding: "0.75rem 1rem", textAlign: "center" }}>
-                    ⚠️ {syncError}
+          {/* Results Panel */}
+          {queryResult && (
+            <div style={{ background: "rgba(255,255,255,0.01)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1.5rem", display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+                  <h3 style={{ fontSize: "1.1rem" }}>Answer Response</h3>
+                  <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
+                    Confidence: {(queryResult.confidence * 100).toFixed(0)}% • Latency: {queryResult.latency_ms}ms
+                  </span>
+                </div>
+                <div style={{ fontSize: "0.95rem", lineHeight: "1.6", color: "var(--text-primary)" }}>
+                  {queryResult.answer}
+                </div>
+              </div>
+
+              {/* Citations */}
+              <div>
+                <h4 style={{ fontSize: "0.9rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Citations & Verified Evidence</h4>
+                {queryResult.citations && queryResult.citations.length > 0 ? (
+                  <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                    {queryResult.citations.map((c: string, idx: number) => (
+                      <span key={idx} style={{ padding: "0.35rem 0.6rem", background: "var(--accent-green)", border: "1px solid var(--accent)", borderRadius: "4px", fontSize: "0.75rem", fontFamily: "var(--font-mono)", color: "var(--text-primary)" }}>
+                        {c}
+                      </span>
+                    ))}
                   </div>
+                ) : (
+                  <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>No verified citations used.</div>
                 )}
+              </div>
+
+              {/* Redactions list */}
+              {queryResult.redactions && queryResult.redactions.length > 0 && (
+                <div>
+                  <h4 style={{ fontSize: "0.9rem", color: "var(--error)", marginBottom: "0.5rem" }}>🛡️ Redacted Items (Insufficient Credentials)</h4>
+                  <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                    {queryResult.redactions.map((r: string, idx: number) => (
+                      <span key={idx} style={{ padding: "0.35rem 0.6rem", background: "rgba(207,102,102,0.1)", border: "1px solid rgba(207,102,102,0.2)", borderRadius: "4px", fontSize: "0.75rem", fontFamily: "var(--font-mono)", color: "var(--error)" }}>
+                        {r}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* RIGHT COLUMN: REPOSITORY INGEST CONTROL */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+          
+          {/* Ingest Card */}
+          <div className="card" style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+            <div>
+              <h2 style={{ fontSize: "1.35rem" }}>Ingestion Pipeline</h2>
+              <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Sync enabled Notion and Slack sources immediately.</p>
+            </div>
+
+            <button 
+              onClick={triggerSyncAll} 
+              disabled={syncing}
+              className="btn btn-primary" 
+              style={{ width: "100%", padding: "0.9rem" }}
+            >
+              {syncing ? "⏳ Syncing..." : "🔄 Sync Target Sources"}
+            </button>
+
+            {syncMessage && (
+              <div style={{
+                padding: "0.75rem 1rem", 
+                borderRadius: "8px", 
+                fontSize: "0.82rem",
+                background: syncStatus === "done" ? "rgba(99, 168, 124, 0.1)" : syncStatus === "error" ? "rgba(207, 102, 102, 0.1)" : "rgba(255,255,255,0.03)",
+                border: `1px solid ${syncStatus === "done" ? "rgba(99, 168, 124, 0.2)" : syncStatus === "error" ? "rgba(207, 102, 102, 0.2)" : "var(--border)"}`,
+                color: syncStatus === "done" ? "var(--success)" : syncStatus === "error" ? "var(--error)" : "var(--text-primary)"
+              }}>
+                {syncMessage}
               </div>
             )}
           </div>
+
+          {/* Quick Actions Card */}
+          <div className="card" style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            <h2 style={{ fontSize: "1.35rem", marginBottom: "0.25rem" }}>Destinations</h2>
+            <a href="/inbox" className="btn btn-outline" style={{ textDecoration: "none", textAlign: "center" }}>
+              Inbox (Review Drafts)
+            </a>
+            <a href="/explorer" className="btn btn-outline" style={{ textDecoration: "none", textAlign: "center" }}>
+              Explorer (Knowledge Map)
+            </a>
+            <a href="/settings" className="btn btn-outline" style={{ textDecoration: "none", textAlign: "center" }}>
+              Settings (AI / Keys)
+            </a>
+          </div>
         </div>
 
-        {/* Navigation Quick Actions */}
-        <div className="card" style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
-          <div>
-            <h2 style={{ fontSize: "1.35rem", marginBottom: "0.25rem" }}>Portal Destinations</h2>
-            <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Quick navigation shortcuts to review page history and verify changes.</p>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-            <a 
-              href="/inbox" 
-              className="btn btn-outline" 
-              style={{ textDecoration: "none", textAlign: "center", display: "block" }}
-            >
-              Open Approval Inbox (Review Drafts)
-            </a>
-            <a 
-              href="/explorer" 
-              className="btn btn-outline" 
-              style={{ textDecoration: "none", textAlign: "center", display: "block" }}
-            >
-              Open Explorer (Obsidian Graph & Pages)
-            </a>
-          </div>
-        </div>
       </div>
     </div>
   );

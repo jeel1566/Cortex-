@@ -9,11 +9,13 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Syncing states
   const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "done" | "error">("idle");
   const [syncMessage, setSyncMessage] = useState<string>("");
 
   // Active Tab
-  const [activeTab, setActiveTab] = useState<"ai" | "notion" | "slack">("ai");
+  const [activeTab, setActiveTab] = useState<"ai" | "notion" | "slack" | "upload">("ai");
 
   // Form states - AI
   const [selectedProvider, setSelectedProvider] = useState<"ollama" | "web_api" | "codex">("web_api");
@@ -30,13 +32,15 @@ export default function SettingsPage() {
   const [notionDatabaseId, setNotionDatabaseId] = useState("");
   const [notionApiKey, setNotionApiKey] = useState("");
   const [notionLastPolled, setNotionLastPolled] = useState("");
-  const [notionStatus, setNotionStatus] = useState<any>(null);
-  const [loadingStatus, setLoadingStatus] = useState(false);
 
   // Form states - Slack
   const [slackEnabled, setSlackEnabled] = useState(false);
   const [slackToken, setSlackToken] = useState("");
   const [slackChannel, setSlackChannel] = useState("");
+
+  // Upload States
+  const [uploadStatus, setUploadStatus] = useState<"idle" | "uploading" | "done" | "error">("idle");
+  const [uploadMessage, setUploadMessage] = useState<string>("");
 
   const getAuthToken = async () => {
     if (process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
@@ -47,7 +51,6 @@ export default function SettingsPage() {
         console.warn("Clerk token acquisition failed, using fallback.", e);
       }
     }
-    // Fallback base64 mock token (represents tenant_a L5 Admin)
     const mockPayload = { tenant_id: "tenant_a", authority_level: 5, name: "Admin (Mock Tenant)" };
     return btoa(JSON.stringify(mockPayload));
   };
@@ -58,14 +61,10 @@ export default function SettingsPage() {
     try {
       const token = await getAuthToken();
       const res = await fetch("http://127.0.0.1:8000/v1/settings", {
-        headers: {
-          "Authorization": `Bearer ${token}`
-        }
+        headers: { "Authorization": `Bearer ${token}` }
       });
       if (res.ok) {
         const data = await res.json();
-        
-        // AI Provider Settings
         if (data.ai_provider && data.ai_provider !== "not_configured") {
           setSelectedProvider(data.ai_provider);
         }
@@ -79,8 +78,6 @@ export default function SettingsPage() {
           if (cfg.codex_endpoint) setCodexEndpoint(cfg.codex_endpoint);
           if (cfg.codex_model) setCodexModel(cfg.codex_model);
         }
-
-        // Connectors Settings
         if (data.connectors) {
           const notion = data.connectors.notion;
           if (notion) {
@@ -96,8 +93,6 @@ export default function SettingsPage() {
             setSlackChannel(slack.channel ?? "");
           }
         }
-      } else {
-        throw new Error("Failed to load settings from server.");
       }
     } catch (e: any) {
       console.error(e);
@@ -107,68 +102,46 @@ export default function SettingsPage() {
     }
   };
 
-  const fetchNotionStatus = async () => {
-    setLoadingStatus(true);
-    try {
-      const token = await getAuthToken();
-      const res = await fetch("http://127.0.0.1:8000/v1/notion/status", {
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setNotionStatus(data);
-      }
-    } catch (err) {
-      console.error("Error fetching Notion status:", err);
-    } finally {
-      setLoadingStatus(false);
-    }
-  };
-
   useEffect(() => {
     fetchSettings();
-    fetchNotionStatus();
   }, [isLoaded, isSignedIn]);
 
   const pollJobStatus = async (jobId: string, token: string) => {
-    const stageMap: Record<string, string> = {
-      "queued": "Queued in background...",
-      "notion_fetch": "📥 Fetching pages and documents from Notion...",
-      "pii_redaction": "🛡️ Redacting PII & cleaning content...",
-      "sentence_splitting": "✂️ Parsing text into sentences...",
-      "speech_act_classification": "🧠 Classifying knowledge statements...",
-      "sentence_clustering": "🔍 Grouping related topics together...",
-      "page_synthesis": "✍️ Synthesizing knowledge pages...",
-      "graph_indexing": "🗂️ Generating vector embeddings & graph...",
-      "complete": "✅ Sync complete! Knowledge base updated.",
-      "failed": "❌ Sync failed during processing."
-    };
-
     const intervalId = setInterval(async () => {
       try {
-        const res = await fetch(`http://127.0.0.1:8000/v1/ingest/${jobId}`, {
+        const res = await fetch(`http://127.0.0.1:8000/v1/sync-runs/${jobId}`, {
           headers: { "Authorization": `Bearer ${token}` }
         });
         if (res.ok) {
           const data = await res.json();
           const status = data.status;
-          const stage = data.current_stage || "queued";
           
-          if (status === "complete") {
+          if (status === "completed") {
             setSyncStatus("done");
-            setSyncMessage(`✓ Sync completed! ${data.pages_created} pages created, ${data.pages_updated} pages updated.`);
+            setUploadStatus("done");
+            const counts = data.counts || {};
+            const msg = `✓ Ingestion completed! Processed ${counts.objects || 0} objects, generated ${counts.drafts || 0} drafts.`;
+            setSyncMessage(msg);
+            setUploadMessage(msg);
             clearInterval(intervalId);
-            fetchSettings(); // Refresh settings to show new last_polled time
-            fetchNotionStatus();
-            setTimeout(() => { setSyncStatus("idle"); setSyncMessage(""); }, 8000);
+            fetchSettings();
+            setTimeout(() => {
+              setSyncStatus("idle");
+              setSyncMessage("");
+              setUploadStatus("idle");
+              setUploadMessage("");
+            }, 8000);
           } else if (status === "failed") {
+            const err = data.error_message || "Processing failed.";
             setSyncStatus("error");
-            setSyncMessage(data.failure_reason ? `Sync failed: ${data.failure_reason}` : "Notion sync failed. Check backend logs or connection settings.");
+            setUploadStatus("error");
+            setSyncMessage(`Sync failed: ${err}`);
+            setUploadMessage(`Processing failed: ${err}`);
             clearInterval(intervalId);
-            fetchNotionStatus();
           } else {
-            const displayMsg = stageMap[stage] || `Processing (${stage})...`;
-            setSyncMessage(`Job ID: ${jobId} — ${displayMsg}`);
+            const progressMsg = `Ingestion pipeline running for ${data.connector_type}...`;
+            setSyncMessage(progressMsg);
+            setUploadMessage(progressMsg);
           }
         }
       } catch (e) {
@@ -177,12 +150,12 @@ export default function SettingsPage() {
     }, 1500);
   };
 
-  const triggerNotionSync = async () => {
+  const triggerSync = async (type: string) => {
     setSyncStatus("syncing");
-    setSyncMessage("Initializing Notion connection...");
+    setSyncMessage(`Initializing ${type} synchronization...`);
     try {
       const token = await getAuthToken();
-      const res = await fetch("http://127.0.0.1:8000/v1/notion/sync", {
+      const res = await fetch(`http://127.0.0.1:8000/v1/connectors/${type}/sync`, {
         method: "POST",
         headers: { "Authorization": `Bearer ${token}` }
       });
@@ -191,11 +164,43 @@ export default function SettingsPage() {
         pollJobStatus(data.job_id, token);
       } else {
         setSyncStatus("error");
-        setSyncMessage(data.detail || "Sync failed. Make sure Notion is enabled and API key is saved.");
+        setSyncMessage(data.detail || "Sync failed to start.");
       }
     } catch (e: any) {
       setSyncStatus("error");
-      setSyncMessage("Could not reach backend. Is the server running?");
+      setSyncMessage("Could not reach backend server.");
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const file = e.target.files[0];
+    
+    setUploadStatus("uploading");
+    setUploadMessage(`Uploading ${file.name}...`);
+    
+    try {
+      const token = await getAuthToken();
+      const formData = new FormData();
+      formData.append("file", file);
+      
+      const res = await fetch("http://127.0.0.1:8000/v1/uploads", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` },
+        body: formData
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        pollJobStatus(data.job_id, token);
+      } else {
+        const err = await res.json();
+        setUploadStatus("error");
+        setUploadMessage(`Upload failed: ${err.detail || "Unknown error"}`);
+      }
+    } catch (err: any) {
+      setUploadStatus("error");
+      setUploadMessage(`Upload error: ${err.message || "Failed to reach backend"}`);
     }
   };
 
@@ -248,7 +253,6 @@ export default function SettingsPage() {
 
       if (res.ok) {
         setSuccess(true);
-        // Refresh to fetch masked credentials and latest fields
         await fetchSettings();
         setTimeout(() => setSuccess(false), 4000);
       } else {
@@ -265,8 +269,7 @@ export default function SettingsPage() {
   const formatDate = (isoStr: string) => {
     if (!isoStr) return "Never synced";
     try {
-      const date = new Date(isoStr);
-      return date.toLocaleString();
+      return new Date(isoStr).toLocaleString();
     } catch (e) {
       return isoStr;
     }
@@ -287,166 +290,160 @@ export default function SettingsPage() {
   return (
     <div style={{ maxWidth: "850px" }}>
       <h1 className="header-title">Settings</h1>
-      <p className="header-subtitle">Manage AI engine configurations, model parameters, and data source connectors.</p>
+      <p className="header-subtitle">Manage AI providers, targeting criteria, and target synchronization connectors.</p>
 
       {success && (
-        <div style={{ background: "rgba(16, 185, 129, 0.1)", border: "1px solid rgba(16, 185, 129, 0.2)", color: "var(--success)", padding: "1rem", borderRadius: "8px", marginBottom: "2rem", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-          <span>✓</span> Settings and connector configurations updated successfully!
+        <div style={{ background: "rgba(99, 168, 124, 0.1)", border: "1px solid rgba(99, 168, 124, 0.2)", color: "var(--success)", padding: "1rem", borderRadius: "8px", marginBottom: "2rem", fontSize: "0.9rem" }}>
+          ✓ Settings and connector configurations updated successfully!
         </div>
       )}
 
       {error && (
-        <div style={{ background: "rgba(239, 68, 68, 0.1)", border: "1px solid rgba(239, 68, 68, 0.2)", color: "var(--error)", padding: "1rem", borderRadius: "8px", marginBottom: "2rem", fontSize: "0.9rem" }}>
+        <div style={{ background: "rgba(207, 102, 102, 0.1)", border: "1px solid rgba(207, 102, 102, 0.2)", color: "var(--error)", padding: "1rem", borderRadius: "8px", marginBottom: "2rem", fontSize: "0.9rem" }}>
           {error}
         </div>
       )}
 
-      {/* Main Settings Navigation Tabs */}
+      {/* Tabs */}
       <div style={{ display: "flex", borderBottom: "1px solid var(--border)", marginBottom: "2rem", gap: "1.5rem" }}>
         <button
+          type="button"
           onClick={() => setActiveTab("ai")}
           style={{
             background: "none",
             border: "none",
             borderBottom: activeTab === "ai" ? "2px solid var(--accent)" : "2px solid transparent",
-            color: activeTab === "ai" ? "#fff" : "var(--text-secondary)",
+            color: activeTab === "ai" ? "var(--text-primary)" : "var(--text-secondary)",
             padding: "0.75rem 0.5rem",
             fontSize: "1rem",
             fontWeight: 600,
-            cursor: "pointer",
-            transition: "all 0.2s ease"
+            cursor: "pointer"
           }}
         >
           🤖 AI Engine Provider
         </button>
         <button
+          type="button"
           onClick={() => setActiveTab("notion")}
           style={{
             background: "none",
             border: "none",
             borderBottom: activeTab === "notion" ? "2px solid var(--accent)" : "2px solid transparent",
-            color: activeTab === "notion" ? "#fff" : "var(--text-secondary)",
+            color: activeTab === "notion" ? "var(--text-primary)" : "var(--text-secondary)",
             padding: "0.75rem 0.5rem",
             fontSize: "1rem",
             fontWeight: 600,
-            cursor: "pointer",
-            transition: "all 0.2s ease"
+            cursor: "pointer"
           }}
         >
           📓 Notion Sync
         </button>
         <button
+          type="button"
           onClick={() => setActiveTab("slack")}
           style={{
             background: "none",
             border: "none",
             borderBottom: activeTab === "slack" ? "2px solid var(--accent)" : "2px solid transparent",
-            color: activeTab === "slack" ? "#fff" : "var(--text-secondary)",
+            color: activeTab === "slack" ? "var(--text-primary)" : "var(--text-secondary)",
             padding: "0.75rem 0.5rem",
             fontSize: "1rem",
             fontWeight: 600,
-            cursor: "pointer",
-            transition: "all 0.2s ease"
+            cursor: "pointer"
           }}
         >
           💬 Slack Sync
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("upload")}
+          style={{
+            background: "none",
+            border: "none",
+            borderBottom: activeTab === "upload" ? "2px solid var(--accent)" : "2px solid transparent",
+            color: activeTab === "upload" ? "var(--text-primary)" : "var(--text-secondary)",
+            padding: "0.75rem 0.5rem",
+            fontSize: "1rem",
+            fontWeight: 600,
+            cursor: "pointer"
+          }}
+        >
+          📁 Local Upload
         </button>
       </div>
 
       <div className="card" style={{ padding: "2.5rem 2rem", borderRadius: "14px" }}>
         <form onSubmit={handleSave}>
           
-          {/* TAB 1: AI ENGINE PROVIDER */}
           {activeTab === "ai" && (
             <div>
-              <h2 style={{ fontSize: "1.35rem", marginBottom: "1.5rem", color: "#fff" }}>AI Model Provider</h2>
-              
-              {/* Provider cards */}
+              <h2 style={{ fontSize: "1.35rem", marginBottom: "1.5rem" }}>AI Model Provider</h2>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "1rem", marginBottom: "2rem" }}>
                 <div 
                   onClick={() => setSelectedProvider("web_api")}
                   style={{ 
-                    cursor: "pointer", 
-                    padding: "1.25rem", 
-                    borderRadius: "10px", 
-                    background: selectedProvider === "web_api" ? "rgba(99, 102, 241, 0.08)" : "var(--bg-tertiary)", 
+                    cursor: "pointer", padding: "1.25rem", borderRadius: "10px", 
+                    background: selectedProvider === "web_api" ? "var(--accent-green)" : "var(--bg-tertiary)", 
                     border: selectedProvider === "web_api" ? "2px solid var(--accent)" : "1px solid var(--border)",
-                    transition: "all 0.2s ease",
                     textAlign: "center"
                   }}
                 >
                   <div style={{ fontSize: "1.75rem", marginBottom: "0.35rem" }}>🌐</div>
-                  <div style={{ fontWeight: 600, color: "#fff", fontSize: "0.95rem" }}>Web API</div>
+                  <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>Web API</div>
                 </div>
 
                 <div 
                   onClick={() => setSelectedProvider("ollama")}
                   style={{ 
-                    cursor: "pointer", 
-                    padding: "1.25rem", 
-                    borderRadius: "10px", 
-                    background: selectedProvider === "ollama" ? "rgba(99, 102, 241, 0.08)" : "var(--bg-tertiary)", 
+                    cursor: "pointer", padding: "1.25rem", borderRadius: "10px", 
+                    background: selectedProvider === "ollama" ? "var(--accent-green)" : "var(--bg-tertiary)", 
                     border: selectedProvider === "ollama" ? "2px solid var(--accent)" : "1px solid var(--border)",
-                    transition: "all 0.2s ease",
                     textAlign: "center"
                   }}
                 >
                   <div style={{ fontSize: "1.75rem", marginBottom: "0.35rem" }}>🦙</div>
-                  <div style={{ fontWeight: 600, color: "#fff", fontSize: "0.95rem" }}>Ollama</div>
+                  <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>Ollama</div>
                 </div>
 
                 <div 
                   onClick={() => setSelectedProvider("codex")}
                   style={{ 
-                    cursor: "pointer", 
-                    padding: "1.25rem", 
-                    borderRadius: "10px", 
-                    background: selectedProvider === "codex" ? "rgba(99, 102, 241, 0.08)" : "var(--bg-tertiary)", 
+                    cursor: "pointer", padding: "1.25rem", borderRadius: "10px", 
+                    background: selectedProvider === "codex" ? "var(--accent-green)" : "var(--bg-tertiary)", 
                     border: selectedProvider === "codex" ? "2px solid var(--accent)" : "1px solid var(--border)",
-                    transition: "all 0.2s ease",
                     textAlign: "center"
                   }}
                 >
                   <div style={{ fontSize: "1.75rem", marginBottom: "0.35rem" }}>💻</div>
-                  <div style={{ fontWeight: 600, color: "#fff", fontSize: "0.95rem" }}>Codex CLI</div>
+                  <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>Codex CLI</div>
                 </div>
               </div>
 
-              {/* AI Details form fields */}
               <div style={{ background: "var(--bg-tertiary)", padding: "2rem", borderRadius: "10px", border: "1px solid var(--border)" }}>
                 {selectedProvider === "web_api" && (
                   <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
                     <div>
                       <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>API Endpoint URL</label>
                       <input 
-                        type="text" 
-                        required
-                        value={webApiEndpoint} 
-                        onChange={(e) => setWebApiEndpoint(e.target.value)} 
+                        type="text" required value={webApiEndpoint} onChange={(e) => setWebApiEndpoint(e.target.value)} 
                         placeholder="https://api.groq.com/openai/v1"
-                        style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "#fff" }}
+                        style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "var(--text-primary)" }}
                       />
                     </div>
                     <div>
                       <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>API Key</label>
                       <input 
-                        type="password" 
-                        required
-                        value={webApiKey} 
-                        onChange={(e) => setWebApiKey(e.target.value)} 
-                        placeholder="Leave unchanged or enter new key"
-                        style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "#fff" }}
+                        type="password" required value={webApiKey} onChange={(e) => setWebApiKey(e.target.value)} 
+                        placeholder="••••••••••••••••"
+                        style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "var(--text-primary)" }}
                       />
                     </div>
                     <div>
                       <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Model Name</label>
                       <input 
-                        type="text" 
-                        required
-                        value={webApiModel} 
-                        onChange={(e) => setWebApiModel(e.target.value)} 
+                        type="text" required value={webApiModel} onChange={(e) => setWebApiModel(e.target.value)} 
                         placeholder="llama-3.1-8b-instant"
-                        style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "#fff" }}
+                        style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "var(--text-primary)" }}
                       />
                     </div>
                   </div>
@@ -457,23 +454,17 @@ export default function SettingsPage() {
                     <div>
                       <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Ollama Endpoint</label>
                       <input 
-                        type="text" 
-                        required
-                        value={ollamaEndpoint} 
-                        onChange={(e) => setOllamaEndpoint(e.target.value)} 
+                        type="text" required value={ollamaEndpoint} onChange={(e) => setOllamaEndpoint(e.target.value)} 
                         placeholder="http://localhost:11434/v1"
-                        style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "#fff" }}
+                        style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "var(--text-primary)" }}
                       />
                     </div>
                     <div>
                       <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Model Name</label>
                       <input 
-                        type="text" 
-                        required
-                        value={ollamaModel} 
-                        onChange={(e) => setOllamaModel(e.target.value)} 
+                        type="text" required value={ollamaModel} onChange={(e) => setOllamaModel(e.target.value)} 
                         placeholder="llama3"
-                        style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "#fff" }}
+                        style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "var(--text-primary)" }}
                       />
                     </div>
                   </div>
@@ -484,22 +475,17 @@ export default function SettingsPage() {
                     <div>
                       <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Codex Endpoint URL</label>
                       <input 
-                        type="text" 
-                        required
-                        value={codexEndpoint} 
-                        onChange={(e) => setCodexEndpoint(e.target.value)} 
+                        type="text" required value={codexEndpoint} onChange={(e) => setCodexEndpoint(e.target.value)} 
                         placeholder="ws://127.0.0.1:4500"
-                        style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "#fff" }}
+                        style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "var(--text-primary)" }}
                       />
                     </div>
                     <div>
                       <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Codex Model Name (optional)</label>
                       <input 
-                        type="text" 
-                        value={codexModel} 
-                        onChange={(e) => setCodexModel(e.target.value)} 
+                        type="text" value={codexModel} onChange={(e) => setCodexModel(e.target.value)} 
                         placeholder="gpt-4o"
-                        style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "#fff" }}
+                        style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "var(--text-primary)" }}
                       />
                     </div>
                   </div>
@@ -508,326 +494,186 @@ export default function SettingsPage() {
             </div>
           )}
 
-          {/* TAB 2: NOTION CONNECTOR */}
           {activeTab === "notion" && (
             <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div>
-                  <h2 style={{ fontSize: "1.35rem", color: "#fff" }}>Notion Sync Connector</h2>
+                  <h2 style={{ fontSize: "1.35rem" }}>Notion Sync Connector</h2>
                   <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", marginTop: "0.25rem" }}>
-                    Polls a Notion workspace database or pages every 5 minutes to ingest updates automatically.
+                    Polls a Notion workspace to ingest updates automatically.
                   </p>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                   <span style={{ fontSize: "0.85rem", fontWeight: 600, color: notionEnabled ? "var(--success)" : "var(--text-secondary)" }}>
                     {notionEnabled ? "Sync Active" : "Sync Disabled"}
                   </span>
-                  <label style={{ position: "relative", display: "inline-block", width: "50px", height: "26px", cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={notionEnabled}
-                      onChange={(e) => setNotionEnabled(e.target.checked)}
-                      style={{ opacity: 0, width: 0, height: 0 }}
-                    />
-                    <span style={{
-                      position: "absolute",
-                      top: 0, left: 0, right: 0, bottom: 0,
-                      backgroundColor: notionEnabled ? "var(--accent)" : "#3f3f46",
-                      borderRadius: "34px",
-                      transition: "0.3s",
-                      boxShadow: notionEnabled ? "0 0 10px rgba(99, 102, 241, 0.4)" : "none"
-                    }}>
-                      <span style={{
-                        position: "absolute",
-                        content: '""',
-                        height: "20px", width: "20px",
-                        left: notionEnabled ? "26px" : "3px",
-                        bottom: "3px",
-                        backgroundColor: "#fff",
-                        borderRadius: "50%",
-                        transition: "0.3s"
-                      }} />
-                    </span>
-                  </label>
+                  <input
+                    type="checkbox" checked={notionEnabled} onChange={(e) => setNotionEnabled(e.target.checked)}
+                    style={{ cursor: "pointer", width: "18px", height: "18px" }}
+                  />
                 </div>
               </div>
 
-              {/* Form settings */}
-              <div style={{ background: "var(--card-bg)", padding: "1.5rem", borderRadius: "12px", border: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+              <div style={{ background: "var(--bg-tertiary)", padding: "1.5rem", borderRadius: "12px", border: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: "1.25rem" }}>
                 <div>
                   <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Notion Integration Token (API Key)</label>
                   <input 
-                    type="password" 
-                    value={notionApiKey} 
-                    onChange={(e) => setNotionApiKey(e.target.value)} 
-                    placeholder={notionEnabled ? "Leave unchanged or enter new Notion token" : "Enter integration token (secret_...)"}
-                    required={notionEnabled}
-                    style={{ width: "100%", padding: "0.75rem", background: "var(--input-bg)", border: "1px solid var(--border)", borderRadius: "8px", color: "#fff", fontSize: "0.9rem" }}
+                    type="password" value={notionApiKey} onChange={(e) => setNotionApiKey(e.target.value)} 
+                    placeholder="Enter integration token (secret_...)" required={notionEnabled}
+                    style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text-primary)" }}
                   />
                 </div>
 
                 <div>
-                  <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>
-                    Notion Database ID <span style={{ color: "#6b7280", fontWeight: 400 }}>(optional)</span>
-                  </label>
+                  <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Notion Database ID (optional)</label>
                   <input 
-                    type="text" 
-                    value={notionDatabaseId} 
-                    onChange={(e) => setNotionDatabaseId(e.target.value)} 
-                    placeholder="Enter specific Database ID (optional)"
-                    style={{ width: "100%", padding: "0.75rem", background: "var(--input-bg)", border: "1px solid var(--border)", borderRadius: "8px", color: "#fff", fontSize: "0.9rem" }}
+                    type="text" value={notionDatabaseId} onChange={(e) => setNotionDatabaseId(e.target.value)} 
+                    placeholder="Database ID"
+                    style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text-primary)" }}
                   />
-                  <small style={{ display: "block", fontSize: "0.75rem", color: "var(--text-secondary)", marginTop: "0.35rem" }}>
-                    💡 Leave blank to ingest <strong style={{ color: "#a1a1aa" }}>all pages, notes, plans and docs</strong> from your entire Notion workspace. Or paste a database ID to sync only that database.
-                  </small>
                 </div>
 
-                {/* Sync Now Button */}
                 <div style={{ borderTop: "1px solid var(--border)", paddingTop: "1.25rem" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "1rem" }}>
                     <div>
-                      <div style={{ fontSize: "0.9rem", fontWeight: 600, color: "#fff", marginBottom: "0.25rem" }}>Manual Sync</div>
-                      <div style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>Pull all Notion pages/notes into Cortex right now</div>
+                      <div style={{ fontSize: "0.9rem", fontWeight: 600, marginBottom: "0.25rem" }}>Manual Sync</div>
+                      <div style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>Pull all Notion pages into Cortex right now</div>
                     </div>
                     <button
-                      type="button"
-                      onClick={triggerNotionSync}
-                      disabled={syncStatus === "syncing"}
-                      style={{
-                        padding: "0.6rem 1.25rem",
-                        background: syncStatus === "syncing" ? "rgba(99,102,241,0.3)" : syncStatus === "done" ? "rgba(16,185,129,0.2)" : syncStatus === "error" ? "rgba(239,68,68,0.2)" : "var(--accent)",
-                        border: "1px solid var(--accent)",
-                        borderRadius: "8px",
-                        color: "#fff",
-                        fontSize: "0.875rem",
-                        fontWeight: 600,
-                        cursor: syncStatus === "syncing" ? "not-allowed" : "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "0.5rem",
-                        whiteSpace: "nowrap"
-                      }}
+                      type="button" onClick={() => triggerSync("notion")} disabled={syncStatus === "syncing"}
+                      className="btn btn-primary"
                     >
-                      {syncStatus === "syncing" ? "⏳ Syncing..." : syncStatus === "done" ? "✓ Synced!" : syncStatus === "error" ? "✗ Failed" : "🔄 Sync Now"}
+                      {syncStatus === "syncing" ? "⏳ Syncing..." : "🔄 Sync Now"}
                     </button>
                   </div>
                   {syncMessage && (
-                    <div style={{
-                      marginTop: "0.75rem",
-                      padding: "0.75rem",
-                      borderRadius: "6px",
-                      fontSize: "0.82rem",
-                      background: syncStatus === "done" ? "rgba(16,185,129,0.1)" : "rgba(239,68,68,0.1)",
-                      border: `1px solid ${syncStatus === "done" ? "rgba(16,185,129,0.2)" : "rgba(239,68,68,0.2)"}`,
-                      color: syncStatus === "done" ? "var(--success)" : "var(--error)",
-                      wordBreak: "break-all"
-                    }}>
+                    <div style={{ marginTop: "0.75rem", padding: "0.75rem", borderRadius: "6px", fontSize: "0.82rem", background: "rgba(255,255,255,0.02)", border: "1px solid var(--border)" }}>
                       {syncMessage}
                     </div>
                   )}
                 </div>
 
-                <div style={{ borderTop: "1px solid var(--border)", paddingTop: "1.25rem", marginTop: "0.5rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
-                    <span>Last Synchronization Cycle:</span>
-                  </div>
-                  <div style={{ fontSize: "0.85rem", fontWeight: 600, color: notionLastPolled ? "#fff" : "var(--text-secondary)" }}>
-                    {formatDate(notionLastPolled)}
-                  </div>
+                <div style={{ borderTop: "1px solid var(--border)", paddingTop: "1.25rem", display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>Last Synchronization:</span>
+                  <span style={{ fontSize: "0.85rem", fontWeight: 600 }}>{formatDate(notionLastPolled)}</span>
                 </div>
-              </div>
-
-              {/* CONNECTION CHECK & OBJECT REGISTRY INBOX */}
-              <div style={{ background: "var(--card-bg)", padding: "1.5rem", borderRadius: "12px", border: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: "1.5rem" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem" }}>
-                  <div>
-                    <h3 style={{ fontSize: "1.1rem", color: "#fff", fontWeight: 600 }}>Notion Access Check & Object Registry</h3>
-                    <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginTop: "0.15rem" }}>
-                      Scan what workspace documents are visible to the connection integration token.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={fetchNotionStatus}
-                    disabled={loadingStatus}
-                    style={{
-                      padding: "0.5rem 1rem",
-                      background: "transparent",
-                      border: "1px solid var(--border)",
-                      borderRadius: "6px",
-                      color: "var(--text-secondary)",
-                      fontSize: "0.8rem",
-                      cursor: "pointer"
-                    }}
-                  >
-                    {loadingStatus ? "⏳ Refreshing..." : "🔄 Refresh Registry"}
-                  </button>
-                </div>
-
-                {/* Metrics Cards */}
-                {notionStatus && notionStatus.summary && (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "0.75rem" }}>
-                    <div style={{ background: "rgba(99,102,241,0.06)", border: "1px solid rgba(99,102,241,0.15)", borderRadius: "10px", padding: "1rem", textAlign: "center" }}>
-                      <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Discovered</div>
-                      <div style={{ fontSize: "1.75rem", color: "var(--accent)", fontWeight: 700, marginTop: "0.25rem" }}>{notionStatus.summary.discovered + notionStatus.summary.synced + notionStatus.summary.failed}</div>
-                    </div>
-                    <div style={{ background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.15)", borderRadius: "10px", padding: "1rem", textAlign: "center" }}>
-                      <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Synced</div>
-                      <div style={{ fontSize: "1.75rem", color: "var(--success)", fontWeight: 700, marginTop: "0.25rem" }}>{notionStatus.summary.synced}</div>
-                    </div>
-                    <div style={{ background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.15)", borderRadius: "10px", padding: "1rem", textAlign: "center" }}>
-                      <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Failed</div>
-                      <div style={{ fontSize: "1.75rem", color: "var(--error)", fontWeight: 700, marginTop: "0.25rem" }}>{notionStatus.summary.failed}</div>
-                    </div>
-                    <div style={{ background: "rgba(156,163,175,0.06)", border: "1px solid rgba(156,163,175,0.15)", borderRadius: "10px", padding: "1rem", textAlign: "center" }}>
-                      <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Empty/Skipped</div>
-                      <div style={{ fontSize: "1.75rem", color: "#9ca3af", fontWeight: 700, marginTop: "0.25rem" }}>{notionStatus.summary.empty + notionStatus.summary.inaccessible}</div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Registry Object List */}
-                {notionStatus && notionStatus.objects && notionStatus.objects.length > 0 ? (
-                  <div style={{ maxHeight: "250px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "8px" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem", textAlign: "left" }}>
-                      <thead>
-                        <tr style={{ background: "var(--card-bg)", borderBottom: "1px solid var(--border)" }}>
-                          <th style={{ padding: "0.6rem", color: "var(--text-secondary)" }}>Title</th>
-                          <th style={{ padding: "0.6rem", color: "var(--text-secondary)" }}>Type</th>
-                          <th style={{ padding: "0.6rem", color: "var(--text-secondary)" }}>Sync Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {notionStatus.objects.map((obj: any) => (
-                          <tr key={obj.notion_id} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
-                            <td style={{ padding: "0.6rem" }}>
-                              <a href={obj.url} target="_blank" rel="noreferrer" style={{ color: "#fff", textDecoration: "underline", fontWeight: 500 }}>
-                                {obj.title}
-                              </a>
-                            </td>
-                            <td style={{ padding: "0.6rem", color: "var(--text-secondary)" }}>
-                              {obj.type}
-                            </td>
-                            <td style={{ padding: "0.6rem" }}>
-                              <span style={{
-                                padding: "0.15rem 0.4rem",
-                                borderRadius: "4px",
-                                fontSize: "0.7rem",
-                                fontWeight: 600,
-                                background: obj.sync_status === "synced" ? "rgba(16,185,129,0.15)" : obj.sync_status === "failed" ? "rgba(239,68,68,0.15)" : "rgba(59,130,246,0.15)",
-                                color: obj.sync_status === "synced" ? "var(--success)" : obj.sync_status === "failed" ? "var(--error)" : "var(--accent)"
-                              }}>
-                                {obj.sync_status.toUpperCase()}
-                              </span>
-                              {obj.error_message && (
-                                <div style={{ fontSize: "0.7rem", color: "var(--error)", marginTop: "0.2rem" }}>
-                                  {obj.error_message}
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div style={{ padding: "2rem", textAlign: "center", border: "1px dashed var(--border)", borderRadius: "8px", color: "var(--text-secondary)", fontSize: "0.85rem" }}>
-                    ℹ️ No objects discovered yet. Save credentials and run a Sync to fetch accessible items.
-                  </div>
-                )}
               </div>
             </div>
           )}
 
-          {/* TAB 3: SLACK CONNECTOR */}
           {activeTab === "slack" && (
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div>
-                  <h2 style={{ fontSize: "1.35rem", color: "#fff" }}>Slack Sync Connector</h2>
+                  <h2 style={{ fontSize: "1.35rem" }}>Slack Sync Connector</h2>
                   <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", marginTop: "0.25rem" }}>
-                    Ingests messages from targeted Slack workspace channels.
+                    Ingests conversations from targeted Slack channels.
                   </p>
                 </div>
-                {/* Active switch */}
-                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                   <span style={{ fontSize: "0.85rem", fontWeight: 600, color: slackEnabled ? "var(--success)" : "var(--text-secondary)" }}>
                     {slackEnabled ? "Sync Active" : "Sync Disabled"}
                   </span>
-                  <label style={{ position: "relative", display: "inline-block", width: "48px", height: "24px" }}>
-                    <input 
-                      type="checkbox" 
-                      checked={slackEnabled}
-                      onChange={(e) => setSlackEnabled(e.target.checked)}
-                      style={{ opacity: 0, width: 0, height: 0 }}
-                    />
-                    <span style={{
-                      position: "absolute",
-                      cursor: "pointer",
-                      inset: 0,
-                      backgroundColor: slackEnabled ? "var(--accent)" : "#3f3f46",
-                      borderRadius: "24px",
-                      transition: "0.2s",
-                      boxShadow: slackEnabled ? "0 0 10px rgba(99, 102, 241, 0.4)" : "none"
-                    }}>
-                      <span style={{
-                        position: "absolute",
-                        content: '""',
-                        height: "18px",
-                        width: "18px",
-                        left: slackEnabled ? "26px" : "3px",
-                        bottom: "3px",
-                        backgroundColor: "#fff",
-                        borderRadius: "50%",
-                        transition: "0.2s"
-                      }} />
-                    </span>
-                  </label>
+                  <input
+                    type="checkbox" checked={slackEnabled} onChange={(e) => setSlackEnabled(e.target.checked)}
+                    style={{ cursor: "pointer", width: "18px", height: "18px" }}
+                  />
                 </div>
               </div>
 
-              <div style={{ background: "var(--bg-tertiary)", padding: "2rem", borderRadius: "10px", border: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+              <div style={{ background: "var(--bg-tertiary)", padding: "1.5rem", borderRadius: "12px", border: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: "1.25rem" }}>
                 <div>
                   <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Slack Bot User OAuth Token</label>
                   <input 
-                    type="password" 
-                    value={slackToken} 
-                    onChange={(e) => setSlackToken(e.target.value)} 
-                    placeholder={slackEnabled ? "Leave unchanged or enter new Slack OAuth Token" : "Enter Slack Bot Token (xoxb-...)"}
-                    required={slackEnabled}
-                    style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "#fff" }}
+                    type="password" value={slackToken} onChange={(e) => setSlackToken(e.target.value)} 
+                    placeholder="xoxb-..." required={slackEnabled}
+                    style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text-primary)" }}
                   />
                 </div>
                 
                 <div>
-                  <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Channel Filter / Target Channel</label>
+                  <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Target Channel</label>
                   <input 
-                    type="text" 
-                    value={slackChannel} 
-                    onChange={(e) => setSlackChannel(e.target.value)} 
-                    placeholder="e.g. general, C12345678"
-                    required={slackEnabled}
-                    style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "6px", color: "#fff" }}
+                    type="text" value={slackChannel} onChange={(e) => setSlackChannel(e.target.value)} 
+                    placeholder="general" required={slackEnabled}
+                    style={{ width: "100%", padding: "0.75rem", background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text-primary)" }}
                   />
-                  <small style={{ display: "block", color: "var(--text-secondary)", fontSize: "0.75rem", marginTop: "0.35rem" }}>
-                    Identify target Slack channel name or ID to index knowledge items from. Ensure the bot is added to this channel.
-                  </small>
+                </div>
+
+                <div style={{ borderTop: "1px solid var(--border)", paddingTop: "1.25rem" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "1rem" }}>
+                    <div>
+                      <div style={{ fontSize: "0.9rem", fontWeight: 600, marginBottom: "0.25rem" }}>Manual Slack Sync</div>
+                      <div style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>Pull Slack channel messages into Cortex right now</div>
+                    </div>
+                    <button
+                      type="button" onClick={() => triggerSync("slack")} disabled={syncStatus === "syncing"}
+                      className="btn btn-primary"
+                    >
+                      {syncStatus === "syncing" ? "⏳ Syncing..." : "🔄 Sync Now"}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Form Actions */}
-          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "2rem", borderTop: "1px solid var(--border)", paddingTop: "1.5rem" }}>
-            <button 
-              type="submit" 
-              disabled={saving} 
-              className="btn btn-primary"
-              style={{ minWidth: "150px" }}
-            >
-              {saving ? "Saving..." : "Save Settings"}
-            </button>
-          </div>
+          {activeTab === "upload" && (
+            <div>
+              <h2 style={{ fontSize: "1.35rem", marginBottom: "0.5rem" }}>Local File Upload</h2>
+              <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "1.5rem" }}>
+                Upload files (Markdown, TXT, PDF, Word DOCX, CSV/Excel) to compile them into page drafts immediately.
+              </p>
+              
+              <div style={{
+                border: "2px dashed var(--border)",
+                borderRadius: "12px",
+                padding: "3rem 2rem",
+                textAlign: "center",
+                background: "rgba(255,255,255,0.01)",
+                cursor: "pointer",
+                position: "relative",
+                transition: "all 0.2s ease"
+              }}>
+                <input 
+                  type="file" 
+                  onChange={handleFileUpload} 
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    opacity: 0,
+                    cursor: "pointer"
+                  }} 
+                />
+                <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>📥</div>
+                <div style={{ fontWeight: 600, marginBottom: "0.25rem" }}>Click or Drag File Here to Upload</div>
+                <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>Supports .md, .txt, .pdf, .docx, .csv, .xlsx</div>
+              </div>
+              
+              {uploadMessage && (
+                <div style={{
+                  marginTop: "1.5rem",
+                  padding: "1rem",
+                  borderRadius: "8px",
+                  fontSize: "0.85rem",
+                  background: "rgba(255,255,255,0.02)",
+                  border: "1px solid var(--border)"
+                }}>
+                  {uploadMessage}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab !== "upload" && (
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "2rem", borderTop: "1px solid var(--border)", paddingTop: "1.5rem" }}>
+              <button 
+                type="submit" disabled={saving} className="btn btn-primary" style={{ minWidth: "150px" }}
+              >
+                {saving ? "Saving..." : "Save Settings"}
+              </button>
+            </div>
+          )}
         </form>
       </div>
     </div>
