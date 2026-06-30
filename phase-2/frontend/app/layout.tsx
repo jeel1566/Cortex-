@@ -60,6 +60,9 @@ export default function RootLayout({
                       <a href="/explorer">Knowledge Explorer</a>
                     </li>
                     <li className="nav-item">
+                      <a href="/sources">Sources</a>
+                    </li>
+                    <li className="nav-item">
                       <a href="/settings">Settings</a>
                     </li>
                   </ul>
