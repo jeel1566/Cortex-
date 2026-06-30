@@ -13,6 +13,11 @@ class GoogleDocsAdapter(ConnectorAdapter):
         self.tenant_id = tenant_id
         self.doc_id = doc_id
         self.credentials_token = credentials_token
+        if self.credentials_token == "mock_gdocs_token":
+            import os
+            allow_mock = os.environ.get("ALLOW_MOCK_CONNECTORS", "").lower() in {"1", "true", "yes"}
+            if not allow_mock:
+                raise ValueError("GOOGLE_DOCS_TOKEN is not configured. Set it or enable ALLOW_MOCK_CONNECTORS=1 for demo syncs.")
 
     def fetch_document_content(self) -> Dict[str, Any]:
         if self.credentials_token == "mock_gdocs_token":
@@ -202,6 +207,9 @@ class GoogleDocsAdapter(ConnectorAdapter):
                         body_parts.append(text)
 
         body_text = "\n\n".join(body_parts)
+        if not body_text.strip():
+            raise ValueError("Zero documents discovered from Google Docs. Google Docs empty sync must fail loudly.")
+            
         doc = NormalizedSourceDocument(
             source_object_external_id=external_id,
             title=title,

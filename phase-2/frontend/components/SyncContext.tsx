@@ -48,7 +48,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       "fetching_sources": "Scanning enabled connectors...",
       "notion_fetch": "Fetching documents from Notion...",
       "slack_fetch": "Retrieving Slack channel threads...",
-      "sample_sync": "Ingesting fallback demo metadata...",
       "pii_redaction": "Redacting PII and filtering logs...",
       "sentence_splitting": "Decomposing block text...",
       "speech_act_classification": "Running speech act classification...",
@@ -62,7 +61,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
   const getProgressPercentage = (stage: string) => {
     const order = [
-      "queued", "fetching_sources", "notion_fetch", "slack_fetch", "sample_sync",
+      "queued", "fetching_sources", "notion_fetch", "slack_fetch",
       "pii_redaction", "sentence_splitting", "speech_act_classification",
       "sentence_clustering", "page_synthesis", "graph_indexing", "complete"
     ];

@@ -13,6 +13,11 @@ class SlackAdapter(ConnectorAdapter):
         self.tenant_id = tenant_id
         self.client_token = client_token
         self.channels = channels
+        if self.client_token == "mock_slack_token":
+            import os
+            allow_mock = os.environ.get("ALLOW_MOCK_CONNECTORS", "").lower() in {"1", "true", "yes"}
+            if not allow_mock:
+                raise ValueError("SLACK_API_TOKEN is not configured. Set it or enable ALLOW_MOCK_CONNECTORS=1 for demo syncs.")
 
     def fetch_thread_replies(self, channel_id: str, thread_ts: str) -> List[Dict[str, Any]]:
         if self.client_token == "mock_slack_token":
@@ -113,6 +118,9 @@ class SlackAdapter(ConnectorAdapter):
                         }
                     ))
                     
+        if not documents:
+            raise ValueError("Zero messages discovered from Slack. Slack empty sync must fail loudly.")
+            
         return NormalizedSourceBundle(
             tenant_id=self.tenant_id,
             connector_type="slack",

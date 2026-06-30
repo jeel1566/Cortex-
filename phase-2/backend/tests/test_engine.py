@@ -93,6 +93,7 @@ class TestCortexNewEngine(unittest.TestCase):
             "segments": 2,
             "relationships": 0,
             "drafts": 1,
+            "skipped_empty": 0,
         })
 
     @unittest.mock.patch("app.storage.git_store.init_tenant_repo")

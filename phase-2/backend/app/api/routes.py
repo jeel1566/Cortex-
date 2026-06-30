@@ -856,15 +856,20 @@ def run_all_sync_background(tenant_id: str, job_id: str):
         all_messages = []
         now_iso = datetime.datetime.utcnow().isoformat() + "Z"
         
-        # 1. Notion Sync if enabled
+        allow_mock = os.environ.get("ALLOW_MOCK_CONNECTORS", "").lower() in {"1", "true", "yes"}
         notion_cfg = tenant_config.get("notion", {})
         if notion_cfg.get("enabled"):
             api_key = notion_cfg.get("api_key")
             database_id = notion_cfg.get("database_id", "").strip()
             last_polled = notion_cfg.get("last_polled", "2000-01-01T00:00:00Z")
             
+            if not api_key:
+                raise ValueError("NOTION_API_KEY is not configured. Set it or enable ALLOW_MOCK_CONNECTORS=1 for demo syncs.")
+            if api_key == "mock_notion_key" and not allow_mock:
+                raise ValueError("NOTION_API_KEY is not configured. Set it or enable ALLOW_MOCK_CONNECTORS=1 for demo syncs.")
+            
             # Mask checks
-            if api_key and api_key != "********":
+            if api_key != "********":
                 cursor.execute("UPDATE ingestion_jobs SET current_stage = 'notion_fetch' WHERE id = ?", (job_id,))
                 conn.commit()
                 
@@ -889,6 +894,12 @@ def run_all_sync_background(tenant_id: str, job_id: str):
         if slack_cfg.get("enabled"):
             cursor.execute("UPDATE ingestion_jobs SET current_stage = 'slack_fetch' WHERE id = ?", (job_id,))
             conn.commit()
+            
+            token = slack_cfg.get("token")
+            if not token:
+                raise ValueError("SLACK_API_TOKEN is not configured. Set it or enable ALLOW_MOCK_CONNECTORS=1 for demo syncs.")
+            if token == "mock_slack_token" and not allow_mock:
+                raise ValueError("SLACK_API_TOKEN is not configured. Set it or enable ALLOW_MOCK_CONNECTORS=1 for demo syncs.")
             
             # Generate simulated Slack message threads for the multi-connector demo.
             mock_slack_messages = [
@@ -1155,20 +1166,41 @@ def sync_connector_route(
     def process_sync(t_id: str, j_id: str, conn_type: str):
         conn = get_tenant_connection(t_id)
         try:
-            bundle = None
+            allow_mock = os.environ.get("ALLOW_MOCK_CONNECTORS", "").lower() in {"1", "true", "yes"}
             if conn_type == "notion":
                 from app.ingestion.connectors.notion import NotionAdapter
-                api_key = os.environ.get("NOTION_API_KEY", "mock_notion_key")
+                api_key = os.environ.get("NOTION_API_KEY")
+                if not api_key:
+                    if allow_mock:
+                        api_key = "mock_notion_key"
+                    else:
+                        raise ValueError("NOTION_API_KEY is not configured. Set it or enable ALLOW_MOCK_CONNECTORS=1 for demo syncs.")
+                elif api_key == "mock_notion_key" and not allow_mock:
+                    raise ValueError("NOTION_API_KEY is not configured. Set it or enable ALLOW_MOCK_CONNECTORS=1 for demo syncs.")
                 adapter = NotionAdapter(t_id, api_key)
                 bundle = adapter.normalize()
             elif conn_type == "slack":
                 from app.ingestion.connectors.slack import SlackAdapter
-                token = os.environ.get("SLACK_API_TOKEN", "mock_slack_token")
+                token = os.environ.get("SLACK_API_TOKEN")
+                if not token:
+                    if allow_mock:
+                        token = "mock_slack_token"
+                    else:
+                        raise ValueError("SLACK_API_TOKEN is not configured. Set it or enable ALLOW_MOCK_CONNECTORS=1 for demo syncs.")
+                elif token == "mock_slack_token" and not allow_mock:
+                    raise ValueError("SLACK_API_TOKEN is not configured. Set it or enable ALLOW_MOCK_CONNECTORS=1 for demo syncs.")
                 adapter = SlackAdapter(t_id, token, ["C123"])
                 bundle = adapter.normalize()
             elif conn_type == "google_docs":
                 from app.ingestion.connectors.google_docs import GoogleDocsAdapter
-                token = os.environ.get("GOOGLE_DOCS_TOKEN", "mock_gdocs_token")
+                token = os.environ.get("GOOGLE_DOCS_TOKEN")
+                if not token:
+                    if allow_mock:
+                        token = "mock_gdocs_token"
+                    else:
+                        raise ValueError("GOOGLE_DOCS_TOKEN is not configured. Set it or enable ALLOW_MOCK_CONNECTORS=1 for demo syncs.")
+                elif token == "mock_gdocs_token" and not allow_mock:
+                    raise ValueError("GOOGLE_DOCS_TOKEN is not configured. Set it or enable ALLOW_MOCK_CONNECTORS=1 for demo syncs.")
                 adapter = GoogleDocsAdapter(t_id, "doc_123", token)
                 bundle = adapter.normalize()
             else:

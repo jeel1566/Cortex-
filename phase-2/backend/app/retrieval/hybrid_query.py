@@ -77,13 +77,32 @@ class HybridQueryEngine:
                 redactions.append(f"segment:{seg['id']}")
                 
         context_parts = []
+        included_pages = []
+        included_segments = []
+        total_chars = 0
+        max_chars = 4500  # ponytail: fits Groq free-tier tests; make provider-aware if needed.
+        
         for page_id in allowed_pages:
+            if total_chars >= max_chars:
+                break
             path = os.path.join(self.pages_dir, f"{page_id}.md")
-            with open(path, "r", encoding="utf-8") as f:
-                context_parts.append(f"Approved Page {page_id}:\n{f.read()}")
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    page_text = f.read()
+                    chunk = page_text[:max_chars - total_chars]
+                    if chunk.strip():
+                        context_parts.append(f"Approved Page {page_id}:\n{chunk}")
+                        included_pages.append(page_id)
+                        total_chars += len(chunk)
                 
         for seg in allowed_segments:
-            context_parts.append(f"Raw Evidence Segment {seg['id']}:\n{seg['text']}")
+            if total_chars >= max_chars:
+                break
+            chunk = seg['text'][:max_chars - total_chars]
+            if chunk.strip():
+                context_parts.append(f"Raw Evidence Segment {seg['id']}:\n{chunk}")
+                included_segments.append(seg)
+                total_chars += len(chunk)
             
         context_str = "\n\n".join(context_parts)
         
@@ -95,14 +114,14 @@ class HybridQueryEngine:
                 {"role": "user", "content": f"Context:\n{context_str}\n\nQuestion: {question}"}
             ]
             try:
-                answer = client.chat_completion(messages, temperature=0.1)
+                answer = client.chat_completion(messages, temperature=0.1, max_tokens=700)
             except Exception as e:
                 answer = f"Error generating answer: {e}"
                 
         citations = []
-        for p in allowed_pages:
+        for p in included_pages:
             citations.append(f"page:{p}")
-        for s in allowed_segments:
+        for s in included_segments:
             citations.append(f"segment:{s['id']}")
             
         knowledge_gaps = []
@@ -114,8 +133,8 @@ class HybridQueryEngine:
         return {
             "answer": answer,
             "citations": citations,
-            "pages_read": allowed_pages,
-            "source_segments_read": [s["id"] for s in allowed_segments],
+            "pages_read": included_pages,
+            "source_segments_read": [s["id"] for s in included_segments],
             "redactions": redactions,
             "knowledge_gaps": knowledge_gaps,
             "confidence": 0.9 if allowed_pages else 0.5,

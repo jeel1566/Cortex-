@@ -179,34 +179,5 @@ def synthesize_page(page_index: int, cluster: List[Dict[str, Any]], feedback: st
         return page_content.strip()
     except Exception as e:
         print(f"Synthesizer error: {e}")
-        # Return fallback stub page if synthesis fails
-        sources_list = list(set([item.get("metadata", {}).get("source_id", "slack://unknown") for item in cluster]))
-        sources_yaml = "\n".join([f"  - {src}" for src in sources_list])
-        title = f"Synthesized Topic {page_index}"
-        timestamp = datetime.datetime.utcnow().isoformat() + "Z"
-        
-        fallback_content = f"""---
-id: page_{page_index:03d}
-title: {title}
-version: 1
-last_updated: {timestamp}
-access_level: team
-primary_links: []
-secondary_links: []
-sources:
-{sources_yaml}
-propositions:
-  - id: prop_1
-    text: Auto-synthesized fallback page details
-    sensitivity: team
----
-# {title}
-
-Auto-synthesized fallback page.
-The following points were discussed:
-"""
-        for i, item in enumerate(cluster):
-            fallback_content += f"- {item['text']} [^{i+1}]\n"
-            
-        return fallback_content
+        raise RuntimeError(f"LLM synthesis failed: {e}")
 

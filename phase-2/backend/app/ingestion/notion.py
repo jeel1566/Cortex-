@@ -10,7 +10,15 @@ class NotionClient:
     and extracts full text block contents recursively.
     """
     def __init__(self, api_key: str = None):
-        self.api_key = api_key or os.environ.get("NOTION_API_KEY", "mock_notion_key")
+        allow_mock = os.environ.get("ALLOW_MOCK_CONNECTORS", "").lower() in {"1", "true", "yes"}
+        self.api_key = api_key or os.environ.get("NOTION_API_KEY")
+        if not self.api_key:
+            if allow_mock:
+                self.api_key = "mock_notion_key"
+            else:
+                raise ValueError("NOTION_API_KEY is not configured. Set it or enable ALLOW_MOCK_CONNECTORS=1 for demo syncs.")
+        elif self.api_key == "mock_notion_key" and not allow_mock:
+            raise ValueError("NOTION_API_KEY is not configured. Set it or enable ALLOW_MOCK_CONNECTORS=1 for demo syncs.")
         self.base_url = "https://api.notion.com/v1"
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",

@@ -144,6 +144,37 @@ class TestHybridQuery(unittest.TestCase):
         self.assertNotIn("segment:seg_confidential", res["citations"])
         self.assertIn("segment:seg_confidential", res["redactions"])
 
+    @patch("app.llm.embedding.encode")
+    @patch("app.retrieval.hybrid_query.get_kimi_client")
+    def test_query_caps_llm_context_for_large_approved_page(self, mock_kimi, mock_query_encode):
+        mock_query_encode.return_value = [0.1] * 384
+
+        tenant_dir = os.path.join(self.temp_dir.name, "tenant_query_test")
+        repo_dir = os.path.join(tenant_dir, "repo")
+        os.makedirs(repo_dir, exist_ok=True)
+        page_id = "page_big"
+        with open(os.path.join(repo_dir, f"{page_id}.md"), "w", encoding="utf-8") as f:
+            f.write("---\nid: page_big\ntitle: Big Page\nsources: []\npropositions: []\nsynthesis_validation: {}\n---\n")
+            f.write("Flowgent is a workflow automation product.\n" * 1000)
+
+        with patch("app.config.TENANTS_DIR", self.temp_dir.name):
+            engine = HybridQueryEngine(tenant_id="tenant_query_test", conn=self.conn)
+        engine.tenant_dir = tenant_dir
+        engine.pages_dir = repo_dir
+        engine.vector_index.page_ids = [page_id]
+        engine.vector_index.embeddings = [[0.1] * 384]
+
+        mock_client = MagicMock()
+        mock_client.chat_completion.return_value = "Flowgent answer."
+        mock_kimi.return_value = mock_client
+
+        res = engine.query("What is Flowgent?", user={"role": "member", "clearance_level": "team"})
+
+        messages = mock_client.chat_completion.call_args.args[0]
+        self.assertLessEqual(len(messages[1]["content"]), 4700)
+        self.assertEqual(mock_client.chat_completion.call_args.kwargs["max_tokens"], 700)
+        self.assertEqual(res["citations"], ["page:page_big"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,6 +3,7 @@ import unittest
 import jwt
 import json
 from fastapi.testclient import TestClient
+from unittest.mock import patch
 
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -101,6 +102,21 @@ class TestSettings(unittest.TestCase):
         self.assertEqual(config["ai_provider_config"]["web_api_key"], "super_secret_openai_key")
         self.assertEqual(config["notion"]["api_key"], "super_secret_notion_key")
         self.assertEqual(config["notion"]["database_id"], "updated_notion_db")
+
+    def test_connector_sync_without_real_key_fails_loudly(self):
+        token = jwt.encode({"tenant_id": self.tenant_id, "authority_level": 1}, "mock_secret", algorithm="HS256")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        with patch.dict(os.environ, {"NOTION_API_KEY": "", "ALLOW_MOCK_CONNECTORS": ""}, clear=False):
+            response = self.client.post("/v1/connectors/notion/sync", headers=headers)
+
+        self.assertEqual(response.status_code, 202)
+        job_id = response.json()["job_id"]
+
+        conn = get_tenant_connection(self.tenant_id)
+        row = conn.execute("SELECT status, error_message FROM sync_runs WHERE id = ?", (job_id,)).fetchone()
+        self.assertEqual(row["status"], "failed")
+        self.assertIn("NOTION_API_KEY is not configured", row["error_message"])
 
 if __name__ == '__main__':
     unittest.main()

@@ -45,11 +45,11 @@ class TestUnifiedSyncGraph(unittest.TestCase):
                     "notion": {
                         "enabled": True,
                         "database_id": "notion_db_id",
-                        "api_key": "mock_notion_key"
+                        "api_key": "test_api_key_placeholder"
                     },
                     "slack": {
                         "enabled": True,
-                        "token": "mock_slack_token",
+                        "token": "test_slack_token_placeholder",
                         "channel": "general"
                     }
                 })

@@ -106,6 +106,7 @@ class NormalizedSourceBundle(BaseModel):
     documents: List[NormalizedSourceDocument] = Field(default_factory=list)
     segments: List[NormalizedSourceSegment] = Field(default_factory=list)
     relationships: List[NormalizedSourceRelationship] = Field(default_factory=list)
+    skipped_empty_count: int = 0
 
     @model_validator(mode="after")
     def validate_bundle(self) -> "NormalizedSourceBundle":

@@ -84,6 +84,7 @@ class TestNotionFeedback(unittest.TestCase):
             except Exception:
                 pass
 
+    @patch.dict(os.environ, {"ALLOW_MOCK_CONNECTORS": "1"})
     def test_notion_client_mock_retrieval(self):
         client = NotionClient(api_key="mock_notion_key")
         updates = client.fetch_database_updates("db_123", "2026-06-17T00:00:00Z")
@@ -91,6 +92,7 @@ class TestNotionFeedback(unittest.TestCase):
         self.assertIn("Superset", updates[0]["text"])
         self.assertEqual(updates[0]["source_id"], "notion://page/mock_page_1")
 
+    @patch.dict(os.environ, {"ALLOW_MOCK_CONNECTORS": "1"})
     @patch('app.ingestion.queue.run_ingestion_pipeline')
     def test_queue_worker_polls_and_syncs(self, mock_pipeline):
         worker = IngestionQueueWorker(poll_interval_sec=1)

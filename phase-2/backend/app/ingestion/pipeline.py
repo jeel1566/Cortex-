@@ -150,77 +150,113 @@ def run_ingestion_pipeline(tenant_id: str, raw_messages: List[Dict[str, Any]], b
         passed = False
         feedback = None
         temperature = 0.3
+        errors = []
         
-        while attempts < 3 and not passed:
-            attempts += 1
-            page_content = synthesize_page(
-                page_num, 
-                cluster, 
-                feedback=feedback, 
-                temperature=temperature, 
-                tenant_id=tenant_id,
-                existing_pages_catalog=existing_pages_catalog
-            )
-            validation = validate_page(sources, page_content, tenant_id=tenant_id)
-            passed = validation.get("validation_passed", False)
+        try:
+            while attempts < 3 and not passed:
+                attempts += 1
+                page_content = synthesize_page(
+                    page_num, 
+                    cluster, 
+                    feedback=feedback, 
+                    temperature=temperature, 
+                    tenant_id=tenant_id,
+                    existing_pages_catalog=existing_pages_catalog
+                )
+                validation = validate_page(sources, page_content, tenant_id=tenant_id)
+                passed = validation.get("validation_passed", False)
+                
+                if not passed:
+                    cov = validation.get("proposition_coverage", 1.0)
+                    hal = validation.get("hallucination_rate", 0.0)
+                    comp = validation.get("completeness_score", 10)
+                    
+                    feedback_parts = []
+                    if cov < 0.90:
+                        feedback_parts.append(
+                            f"CRITICAL: Proposition coverage was too low ({cov:.2f}). "
+                            "You must explicitly include and document all source claims on this page."
+                        )
+                    if hal > 0.02:
+                        feedback_parts.append(
+                            f"CRITICAL: Hallucination rate was too high ({hal:.2f}). "
+                            "Strictly limit claims to the facts in the source logs. Do not extrapolate."
+                        )
+                    if comp < 7:
+                        feedback_parts.append(
+                            f"CRITICAL: Completeness score was too low ({comp}/10). "
+                            "Ensure the page is a cohesive, fully detailed, and comprehensive answer to the topic."
+                        )
+                        temperature = 0.2
+                        
+                    feedback = "\n".join(feedback_parts)
             
             if not passed:
-                cov = validation.get("proposition_coverage", 1.0)
-                hal = validation.get("hallucination_rate", 0.0)
-                comp = validation.get("completeness_score", 10)
-                
-                feedback_parts = []
-                if cov < 0.90:
-                    feedback_parts.append(
-                        f"CRITICAL: Proposition coverage was too low ({cov:.2f}). "
-                        "You must explicitly include and document all source claims on this page."
-                    )
-                if hal > 0.02:
-                    feedback_parts.append(
-                        f"CRITICAL: Hallucination rate was too high ({hal:.2f}). "
-                        "Strictly limit claims to the facts in the source logs. Do not extrapolate."
-                    )
-                if comp < 7:
-                    feedback_parts.append(
-                        f"CRITICAL: Completeness score was too low ({comp}/10). "
-                        "Ensure the page is a cohesive, fully detailed, and comprehensive answer to the topic."
-                    )
-                    temperature = 0.2
-                    
-                feedback = "\n".join(feedback_parts)
-            
-        status = "APPROVED" if passed else "DRAFT"
-        
-        # Inject validation scores block into YAML header
-        val_block = (
-            f"synthesis_validation:\n"
-            f"  proposition_coverage: {validation.get('proposition_coverage', 0.0):.2f}\n"
-            f"  hallucination_rate: {validation.get('hallucination_rate', 1.0):.2f}\n"
-            f"  completeness_score: {validation.get('completeness_score', 1)}\n"
-            f"  validation_passed: {str(passed).lower()}\n"
-            f"  validated_at: {datetime.datetime.utcnow().isoformat()}Z\n"
-        )
-        if page_content.startswith("---"):
-            from app.ingestion.validation import find_frontmatter_end
-            close = find_frontmatter_end(page_content)
-            if close != -1:
-                page_content = page_content[:close] + val_block + page_content[close:]
-                
-        # Verify page shape before writing
-        from app.ingestion.validation import verify_page_shape
-        try:
-            verify_page_shape(page_content, strict_evidence=False)
-        except ValueError as ve:
-            raise ValueError(f"Page shape validation failed for {page_id}: {ve}")
+                errors.append(
+                    f"Page synthesis validation failed for {page_id}. "
+                    f"Proposition coverage: {validation.get('proposition_coverage', 0.0):.2f}, "
+                    f"Hallucination rate: {validation.get('hallucination_rate', 1.0):.2f}, "
+                    f"Completeness: {validation.get('completeness_score', 1)}/10"
+                )
+            else:
+                # Inject validation scores block into YAML header
+                val_block = (
+                    f"synthesis_validation:\n"
+                    f"  proposition_coverage: {validation.get('proposition_coverage', 0.0):.2f}\n"
+                    f"  hallucination_rate: {validation.get('hallucination_rate', 1.0):.2f}\n"
+                    f"  completeness_score: {validation.get('completeness_score', 1)}\n"
+                    f"  validation_passed: {str(passed).lower()}\n"
+                    f"  validated_at: {datetime.datetime.utcnow().isoformat()}Z\n"
+                )
+                if page_content.startswith("---"):
+                    from app.ingestion.validation import find_frontmatter_end
+                    close = find_frontmatter_end(page_content)
+                    if close != -1:
+                        page_content = page_content[:close] + val_block + page_content[close:]
+                        
+                # Verify page shape before writing
+                from app.ingestion.validation import verify_page_shape
+                verify_page_shape(page_content, strict_evidence=False)
+        except Exception as e:
+            errors.append(str(e))
+            passed = False
 
-        # If validation did not pass, reject and fail the ingestion job
-        if not passed:
-            raise ValueError(
-                f"Page synthesis validation failed for {page_id}. "
-                f"Proposition coverage: {validation.get('proposition_coverage', 0.0):.2f}, "
-                f"Hallucination rate: {validation.get('hallucination_rate', 1.0):.2f}, "
-                f"Completeness: {validation.get('completeness_score', 1)}/10"
-            )
+        if not passed or errors:
+            try:
+                from app.database.connection import get_tenant_connection
+                from app.ingestion.source_store import create_knowledge_page_draft
+                conn = get_tenant_connection(tenant_id)
+                
+                sources_list = list(set([item.get("metadata", {}).get("source_id", "slack://unknown") for item in cluster]))
+                sources_yaml_str = "\n".join([f'  - "{src}"' for src in sources_list])
+                title = f"Synthesized Topic {page_num}"
+                draft_id = f"draft_{page_num:03d}"
+                
+                draft_content = (
+                    "---\n"
+                    f'id: "{draft_id}"\n'
+                    f'title: "{title}"\n'
+                    f"sources:\n"
+                    f"{sources_yaml_str}\n"
+                    "---\n\n"
+                    f"# {title}\n"
+                )
+                
+                create_knowledge_page_draft(
+                    conn,
+                    tenant_id=tenant_id,
+                    title=title,
+                    content=draft_content,
+                    status="REJECTED",
+                    validation_passed=False,
+                    errors=errors
+                )
+            except Exception as store_err:
+                print(f"Failed to store rejected draft: {store_err}")
+                
+            raise ValueError(errors[0] if errors else "Page synthesis failed.")
+
+        status = "APPROVED" if passed else "DRAFT"
 
         # Write page to file
         page_path = os.path.join(repo_dir, f"{page_id}.md")

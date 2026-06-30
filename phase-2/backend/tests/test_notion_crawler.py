@@ -7,6 +7,7 @@ from unittest.mock import patch, MagicMock
 from app.ingestion.notion import NotionClient
 
 class TestNotionCrawler(unittest.TestCase):
+    @patch.dict(os.environ, {"ALLOW_MOCK_CONNECTORS": "1"})
     def test_mock_client_discover_objects(self):
         client = NotionClient(api_key="mock_notion_key")
         discovered = client.discover_objects()

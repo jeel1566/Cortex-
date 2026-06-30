@@ -33,7 +33,14 @@ class CortexNewEngine:
             raise ValueError("tenant_id does not match source bundle")
 
         conn = self._conn(tenant_id)
-        counts = {"objects": 0, "documents": 0, "segments": 0, "relationships": 0, "drafts": 0}
+        counts = {
+            "objects": 0,
+            "documents": 0,
+            "segments": 0,
+            "relationships": 0,
+            "drafts": 0,
+            "skipped_empty": getattr(bundle, "skipped_empty_count", 0)
+        }
         stages: List[EngineStageResult] = []
 
         object_ids: Dict[str, str] = {}

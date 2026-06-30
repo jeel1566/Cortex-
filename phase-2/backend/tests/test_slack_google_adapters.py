@@ -4,11 +4,13 @@ import sys
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from unittest.mock import patch
 from app.ingestion.connectors.slack import SlackAdapter
 from app.ingestion.connectors.google_docs import GoogleDocsAdapter
 
 
 class TestSlackGoogleAdapters(unittest.TestCase):
+    @patch.dict(os.environ, {"ALLOW_MOCK_CONNECTORS": "1"})
     def test_slack_thread_becomes_document(self):
         adapter = SlackAdapter(tenant_id="tenant_test", client_token="mock_slack_token", channels=["C123"])
         bundle = adapter.normalize()
@@ -17,6 +19,7 @@ class TestSlackGoogleAdapters(unittest.TestCase):
         self.assertEqual(bundle.documents[0].source_object_external_id, "slack://channel/C123/thread/1719583200.0001")
         self.assertEqual(bundle.documents[0].title, "Parent thread message")
 
+    @patch.dict(os.environ, {"ALLOW_MOCK_CONNECTORS": "1"})
     def test_slack_messages_become_ordered_segments(self):
         adapter = SlackAdapter(tenant_id="tenant_test", client_token="mock_slack_token", channels=["C123"])
         bundle = adapter.normalize()
@@ -28,6 +31,7 @@ class TestSlackGoogleAdapters(unittest.TestCase):
         self.assertEqual(bundle.segments[1].text, "First reply message")
         self.assertEqual(bundle.segments[1].position, 1)
 
+    @patch.dict(os.environ, {"ALLOW_MOCK_CONNECTORS": "1"})
     def test_google_doc_headings_become_heading_paths(self):
         adapter = GoogleDocsAdapter(tenant_id="tenant_test", doc_id="doc_123", credentials_token="mock_gdocs_token")
         bundle = adapter.normalize()
@@ -37,6 +41,7 @@ class TestSlackGoogleAdapters(unittest.TestCase):
         self.assertEqual(bundle.segments[1].text, "Introduction")
         self.assertEqual(bundle.segments[2].heading_path, ["Introduction"])
 
+    @patch.dict(os.environ, {"ALLOW_MOCK_CONNECTORS": "1"})
     def test_google_doc_table_rows_preserved(self):
         adapter = GoogleDocsAdapter(tenant_id="tenant_test", doc_id="doc_123", credentials_token="mock_gdocs_token")
         bundle = adapter.normalize()

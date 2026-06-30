@@ -36,10 +36,18 @@ class NotionAdapter(ConnectorAdapter):
         documents = []
         segments = []
         relationships = []
+        skipped_empty = 0
         
         for page in pages:
             external_id = f"notion://page/{page['id']}"
             
+            page_body = self.client.fetch_page_content(page["id"])
+            if not page_body.strip():
+                import logging
+                logging.getLogger("notion").warning(f"Skipping empty Notion page {page['title']} ({page['id']})")
+                skipped_empty += 1
+                continue
+                
             src_obj = NormalizedSourceObject(
                 tenant_id=self.tenant_id,
                 connector_type="notion",
@@ -51,10 +59,6 @@ class NotionAdapter(ConnectorAdapter):
             )
             objects.append(src_obj)
             
-            page_body = self.client.fetch_page_content(page["id"])
-            if not page_body.strip():
-                page_body = f"Empty page {page['title']}"
-                
             doc = NormalizedSourceDocument(
                 source_object_external_id=external_id,
                 title=page["title"],
@@ -107,11 +111,15 @@ class NotionAdapter(ConnectorAdapter):
                     relationship_type="child_of"
                 ))
                 
+        if not documents:
+            raise ValueError("Zero pages discovered from Notion. Notion empty sync must fail loudly.")
+                
         return NormalizedSourceBundle(
             tenant_id=self.tenant_id,
             connector_type="notion",
             objects=objects,
             documents=documents,
             segments=segments,
-            relationships=relationships
+            relationships=relationships,
+            skipped_empty_count=skipped_empty
         )
