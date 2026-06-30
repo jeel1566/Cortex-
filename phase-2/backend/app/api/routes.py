@@ -18,8 +18,16 @@ from prometheus_client import Counter, Histogram
 logger = get_logger(__name__)
 router = APIRouter()
 
-QUERIES_COUNTER = Counter("cortex_queries_total", "Total queries executed", ["tenant_id"])
-LATENCY_HISTOGRAM = Histogram("cortex_query_latency_seconds", "Query latency distribution", ["tenant_id"])
+from prometheus_client import REGISTRY
+if "cortex_queries_total" in REGISTRY._names_to_collectors:
+    QUERIES_COUNTER = REGISTRY._names_to_collectors["cortex_queries_total"]
+else:
+    QUERIES_COUNTER = Counter("cortex_queries_total", "Total queries executed", ["tenant_id"])
+
+if "cortex_query_latency_seconds" in REGISTRY._names_to_collectors:
+    LATENCY_HISTOGRAM = REGISTRY._names_to_collectors["cortex_query_latency_seconds"]
+else:
+    LATENCY_HISTOGRAM = Histogram("cortex_query_latency_seconds", "Query latency distribution", ["tenant_id"])
 
 # ── Pydantic Request Models ──────────────────────────────────────────────────
 
@@ -46,7 +54,15 @@ def query_knowledge(
     agent: dict = Depends(PermissionChecker(min_level=0))
 ):
     tenant_id = agent["tenant_id"]
-    clearance = agent["authority_level"]
+    clearance_num = agent.get("authority_level", 1)
+    clearance_map = {0: "public", 1: "team", 2: "confidential", 3: "restricted"}
+    clearance_str = clearance_map.get(clearance_num, "team")
+    
+    user = {
+        "clearance_level": clearance_str,
+        "department": agent.get("department"),
+        "role": agent.get("role", "member")
+    }
     question = request.question
     
     tenant_dir = os.path.join(TENANTS_DIR, tenant_id)
@@ -58,8 +74,9 @@ def query_knowledge(
         
     try:
         t0 = time.time()
-        engine = CortexQueryEngine(tenant_dir=tenant_dir)
-        result = engine.query(question, user_clearance=clearance)
+        from app.retrieval.hybrid_query import HybridQueryEngine
+        engine = HybridQueryEngine(tenant_id=tenant_id)
+        result = engine.query(question, user=user)
         latency_sec = time.time() - t0
         QUERIES_COUNTER.labels(tenant_id=tenant_id).inc()
         LATENCY_HISTOGRAM.labels(tenant_id=tenant_id).observe(latency_sec)
@@ -70,7 +87,6 @@ def query_knowledge(
             detail=f"Error running query: {e}"
         )
         
-    # Log the query execution to the tenant's SQLite DB
     conn = get_tenant_connection(tenant_id)
     cursor = conn.cursor()
     query_id = f"q_{uuid.uuid4().hex[:8]}"
@@ -88,10 +104,10 @@ def query_knowledge(
                 tenant_id,
                 question,
                 json.dumps(result["pages_read"]),
-                result["total_latency_ms"],
-                clearance,
-                0.90,  # overall_confidence mock
-                0,     # had_conflict
+                result["latency_ms"],
+                clearance_num,
+                result["confidence"],
+                0,
                 1 if len(result["knowledge_gaps"]) > 0 else 0,
                 datetime.datetime.utcnow().isoformat() + "Z"
             )
@@ -101,6 +117,14 @@ def query_knowledge(
         logger.error("query_log_error", error=str(e))
         
     return {
+        "answer": result["answer"],
+        "citations": result["citations"],
+        "pages_read": result["pages_read"],
+        "source_segments_read": result["source_segments_read"],
+        "redactions": result["redactions"],
+        "knowledge_gaps": result["knowledge_gaps"],
+        "confidence": result["confidence"],
+        "latency_ms": result["latency_ms"],
         "query_id": query_id,
         "pages": [
             {
@@ -108,12 +132,7 @@ def query_knowledge(
                 "title": f"Page {pid}",
                 "content": f"Context block retrieved for {pid}"
             } for pid in result["pages_read"]
-        ],
-        "traversal_path": result["traversal_path"],
-        "knowledge_gaps": result["knowledge_gaps"],
-        "overall_confidence": 0.90,
-        "total_latency_ms": result["total_latency_ms"],
-        "pages_read": len(result["pages_read"])
+        ]
     }
 
 # ── GET /v1/pages ────────────────────────────────────────────────────────────
@@ -962,4 +981,281 @@ def trigger_all_sync(
         "message": "Unified sync pipeline started.",
         "poll_url": f"/v1/ingest/{job_id}"
     }
+
+
+# ── GET /v1/drafts ────────────────────────────────────────────────────────────
+
+@router.get("/drafts")
+def list_drafts(
+    agent: dict = Depends(PermissionChecker(min_level=0))
+):
+    tenant_id = agent["tenant_id"]
+    conn = get_tenant_connection(tenant_id)
+    rows = conn.execute("SELECT * FROM knowledge_page_drafts").fetchall()
+    return [dict(r) for r in rows]
+
+
+# ── GET /v1/drafts/{draft_id} ──────────────────────────────────────────────────
+
+@router.get("/drafts/{draft_id}")
+def get_draft_by_id(
+    draft_id: str,
+    agent: dict = Depends(PermissionChecker(min_level=0))
+):
+    tenant_id = agent["tenant_id"]
+    conn = get_tenant_connection(tenant_id)
+    row = conn.execute("SELECT * FROM knowledge_page_drafts WHERE id = ?", (draft_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return dict(row)
+
+
+# ── POST /v1/drafts/{draft_id}/approve ──────────────────────────────────────────
+
+@router.post("/drafts/{draft_id}/approve")
+def approve_draft_route(
+    draft_id: str,
+    agent: dict = Depends(PermissionChecker(min_level=1))
+):
+    tenant_id = agent["tenant_id"]
+    approver = agent.get("email") or agent.get("id") or "approver"
+    from app.ingestion.engine import CortexNewEngine
+    engine = CortexNewEngine()
+    result = engine.approve_draft(tenant_id, draft_id, approver)
+    if not result.ok:
+        raise HTTPException(status_code=400, detail=f"Approval failed: {', '.join(result.failures)}")
+    return {
+        "ok": True,
+        "draft_id": result.draft_id,
+        "page_id": result.page_id,
+        "commit_sha": result.commit_sha
+    }
+
+
+# ── POST /v1/drafts/{draft_id}/reject ──────────────────────────────────────────
+
+@router.post("/drafts/{draft_id}/reject")
+def reject_draft_route(
+    draft_id: str,
+    agent: dict = Depends(PermissionChecker(min_level=1))
+):
+    tenant_id = agent["tenant_id"]
+    conn = get_tenant_connection(tenant_id)
+    row = conn.execute("SELECT 1 FROM knowledge_page_drafts WHERE id = ?", (draft_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    now_iso = datetime.datetime.utcnow().isoformat() + "Z"
+    conn.execute(
+        "UPDATE knowledge_page_drafts SET status = 'REJECTED', updated_at = ? WHERE id = ?",
+        (now_iso, draft_id)
+    )
+    conn.commit()
+    return {"ok": True, "draft_id": draft_id, "status": "REJECTED"}
+
+
+# ── POST /v1/uploads ─────────────────────────────────────────────────────────
+from fastapi import UploadFile, File
+
+@router.post("/uploads", status_code=status.HTTP_202_ACCEPTED)
+def upload_file_route(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    agent: dict = Depends(PermissionChecker(min_level=1))
+):
+    tenant_id = agent["tenant_id"]
+    import tempfile
+    temp_dir = tempfile.gettempdir()
+    temp_path = os.path.join(temp_dir, f"{uuid.uuid4().hex}_{file.filename}")
+    with open(temp_path, "wb") as f:
+        f.write(file.file.read())
+        
+    job_id = f"job_upload_{uuid.uuid4().hex[:8]}"
+    conn = get_tenant_connection(tenant_id)
+    conn.execute(
+        """
+        INSERT INTO sync_runs (id, tenant_id, connector_type, status, started_at, completed_at, counts_json, error_message)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (job_id, tenant_id, "local_upload", "running", datetime.datetime.utcnow().isoformat() + "Z", None, "{}", None)
+    )
+    conn.commit()
+    
+    def process_upload(t_id: str, j_id: str, f_path: str, f_name: str):
+        conn = get_tenant_connection(t_id)
+        try:
+            from app.ingestion.connectors.local_upload import LocalUploadAdapter
+            from app.ingestion.engine import CortexNewEngine
+            adapter = LocalUploadAdapter(t_id, f_path, filename=f_name)
+            bundle = adapter.normalize()
+            
+            engine = CortexNewEngine(conn=conn)
+            res = engine.ingest_bundle(t_id, bundle)
+            
+            doc_hashes = [doc.content_hash for doc in bundle.documents]
+            segments_to_index = []
+            for h in doc_hashes:
+                doc_row = conn.execute("SELECT id FROM source_documents WHERE content_hash = ? AND tenant_id = ?", (h, t_id)).fetchone()
+                if doc_row:
+                    doc_id = doc_row["id"]
+                    segs = conn.execute("SELECT id, text, content_hash FROM source_segments WHERE document_id = ? AND tenant_id = ?", (doc_id, t_id)).fetchall()
+                    segments_to_index.extend([dict(r) for r in segs])
+            
+            if segments_to_index:
+                from app.retrieval.raw_segment_index import RawSegmentIndex
+                idx = RawSegmentIndex(t_id)
+                idx.add_segments(segments_to_index)
+            
+            status = "completed" if res.ok else "failed"
+            error_msg = ", ".join(res.failures) if not res.ok else None
+            
+            conn.execute(
+                "UPDATE sync_runs SET status = ?, completed_at = ?, counts_json = ?, error_message = ? WHERE id = ?",
+                (status, datetime.datetime.utcnow().isoformat() + "Z", json.dumps(res.counts), error_msg, j_id)
+            )
+            conn.commit()
+        except Exception as e:
+            conn.execute(
+                "UPDATE sync_runs SET status = ?, completed_at = ?, error_message = ? WHERE id = ?",
+                ("failed", datetime.datetime.utcnow().isoformat() + "Z", str(e), j_id)
+            )
+            conn.commit()
+        finally:
+            if os.path.exists(f_path):
+                os.remove(f_path)
+                
+    background_tasks.add_task(process_upload, tenant_id, job_id, temp_path, file.filename)
+    return {
+        "job_id": job_id,
+        "status": "running",
+        "message": "File upload started processing in background."
+    }
+
+
+# ── POST /v1/connectors/{connector_type}/sync ────────────────────────────────
+
+@router.post("/connectors/{connector_type}/sync", status_code=status.HTTP_202_ACCEPTED)
+def sync_connector_route(
+    connector_type: str,
+    background_tasks: BackgroundTasks,
+    agent: dict = Depends(PermissionChecker(min_level=1))
+):
+    tenant_id = agent["tenant_id"]
+    job_id = f"job_sync_{uuid.uuid4().hex[:8]}"
+    
+    conn = get_tenant_connection(tenant_id)
+    conn.execute(
+        """
+        INSERT INTO sync_runs (id, tenant_id, connector_type, status, started_at, completed_at, counts_json, error_message)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (job_id, tenant_id, connector_type, "running", datetime.datetime.utcnow().isoformat() + "Z", None, "{}", None)
+    )
+    conn.commit()
+    
+    def process_sync(t_id: str, j_id: str, conn_type: str):
+        conn = get_tenant_connection(t_id)
+        try:
+            bundle = None
+            if conn_type == "notion":
+                from app.ingestion.connectors.notion import NotionAdapter
+                api_key = os.environ.get("NOTION_API_KEY", "mock_notion_key")
+                adapter = NotionAdapter(t_id, api_key)
+                bundle = adapter.normalize()
+            elif conn_type == "slack":
+                from app.ingestion.connectors.slack import SlackAdapter
+                token = os.environ.get("SLACK_API_TOKEN", "mock_slack_token")
+                adapter = SlackAdapter(t_id, token, ["C123"])
+                bundle = adapter.normalize()
+            elif conn_type == "google_docs":
+                from app.ingestion.connectors.google_docs import GoogleDocsAdapter
+                token = os.environ.get("GOOGLE_DOCS_TOKEN", "mock_gdocs_token")
+                adapter = GoogleDocsAdapter(t_id, "doc_123", token)
+                bundle = adapter.normalize()
+            else:
+                raise ValueError(f"Unknown connector type: {conn_type}")
+                
+            from app.ingestion.engine import CortexNewEngine
+            engine = CortexNewEngine(conn=conn)
+            res = engine.ingest_bundle(t_id, bundle)
+            
+            doc_hashes = [doc.content_hash for doc in bundle.documents]
+            segments_to_index = []
+            for h in doc_hashes:
+                doc_row = conn.execute("SELECT id FROM source_documents WHERE content_hash = ? AND tenant_id = ?", (h, t_id)).fetchone()
+                if doc_row:
+                    doc_id = doc_row["id"]
+                    segs = conn.execute("SELECT id, text, content_hash FROM source_segments WHERE document_id = ? AND tenant_id = ?", (doc_id, t_id)).fetchall()
+                    segments_to_index.extend([dict(r) for r in segs])
+            
+            if segments_to_index:
+                from app.retrieval.raw_segment_index import RawSegmentIndex
+                idx = RawSegmentIndex(t_id)
+                idx.add_segments(segments_to_index)
+                
+            status = "completed" if res.ok else "failed"
+            error_msg = ", ".join(res.failures) if not res.ok else None
+            conn.execute(
+                "UPDATE sync_runs SET status = ?, completed_at = ?, counts_json = ?, error_message = ? WHERE id = ?",
+                (status, datetime.datetime.utcnow().isoformat() + "Z", json.dumps(res.counts), error_msg, j_id)
+            )
+            conn.commit()
+        except Exception as e:
+            conn.execute(
+                "UPDATE sync_runs SET status = ?, completed_at = ?, error_message = ? WHERE id = ?",
+                ("failed", datetime.datetime.utcnow().isoformat() + "Z", str(e), j_id)
+            )
+            conn.commit()
+            
+    background_tasks.add_task(process_sync, tenant_id, job_id, connector_type)
+    return {
+        "job_id": job_id,
+        "status": "running",
+        "message": f"Sync run for {connector_type} started."
+    }
+
+
+# ── GET /v1/sync-runs/{sync_run_id} ──────────────────────────────────────────
+
+@router.get("/sync-runs/{sync_run_id}")
+def get_sync_run(
+    sync_run_id: str,
+    agent: dict = Depends(PermissionChecker(min_level=0))
+):
+    tenant_id = agent["tenant_id"]
+    conn = get_tenant_connection(tenant_id)
+    row = conn.execute("SELECT * FROM sync_runs WHERE id = ?", (sync_run_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Sync run not found")
+    res = dict(row)
+    res["counts"] = json.loads(res.pop("counts_json", "{}"))
+    return res
+
+
+# ── GET /v1/source-objects ───────────────────────────────────────────────────
+
+@router.get("/source-objects")
+def list_source_objects(
+    agent: dict = Depends(PermissionChecker(min_level=0))
+):
+    tenant_id = agent["tenant_id"]
+    conn = get_tenant_connection(tenant_id)
+    rows = conn.execute("SELECT * FROM source_objects").fetchall()
+    return [dict(r) for r in rows]
+
+
+# ── GET /v1/source-documents/{document_id} ───────────────────────────────────
+
+@router.get("/source-documents/{document_id}")
+def get_source_document(
+    document_id: str,
+    agent: dict = Depends(PermissionChecker(min_level=0))
+):
+    tenant_id = agent["tenant_id"]
+    conn = get_tenant_connection(tenant_id)
+    row = conn.execute("SELECT * FROM source_documents WHERE id = ?", (document_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Source document not found")
+    return dict(row)
+
+
 

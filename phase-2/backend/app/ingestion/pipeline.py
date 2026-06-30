@@ -208,7 +208,7 @@ def run_ingestion_pipeline(tenant_id: str, raw_messages: List[Dict[str, Any]], b
         # Verify page shape before writing
         from app.ingestion.validation import verify_page_shape
         try:
-            verify_page_shape(page_content)
+            verify_page_shape(page_content, strict_evidence=False)
         except ValueError as ve:
             raise ValueError(f"Page shape validation failed for {page_id}: {ve}")
 

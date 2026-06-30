@@ -14,7 +14,10 @@ class TestStrictValidator(unittest.TestCase):
             "sources:\n"
             "  - \"notion://page/123\"\n"
             "propositions:\n"
-            "  - \"Gunicorn runs as a WSGI server.\"\n"
+            "  - id: \"prop_1\"\n"
+            "    text: \"Gunicorn runs as a WSGI server.\"\n"
+            "    evidence_segment_ids:\n"
+            "      - \"seg_123\"\n"
             "synthesis_validation:\n"
             "  proposition_coverage: 1.0\n"
             "  hallucination_rate: 0.0\n"
@@ -56,7 +59,10 @@ class TestStrictValidator(unittest.TestCase):
             "sources:\n"
             "  - \"notion://page/123\"\n"
             "propositions:\n"
-            "  - \"Gunicorn runs as WSGI.\"\n"
+            "  - id: \"prop_1\"\n"
+            "    text: \"Gunicorn runs as WSGI.\"\n"
+            "    evidence_segment_ids:\n"
+            "      - \"seg_123\"\n"
             "synthesis_validation:\n"
             "  proposition_coverage: 1.0\n"
             "  hallucination_rate: 0.0\n"
@@ -72,3 +78,49 @@ class TestStrictValidator(unittest.TestCase):
         with self.assertRaises(ValueError) as context:
             verify_page_shape(content_closing)
         self.assertIn("contains prompt leakage", str(context.exception))
+
+    def test_markdown_fence_wrapping_fails(self):
+        content = (
+            "```markdown\n"
+            "---\n"
+            "id: \"page_001\"\n"
+            "title: \"WSGI Server\"\n"
+            "sources:\n"
+            "  - \"notion://page/123\"\n"
+            "propositions:\n"
+            "  - id: \"prop_1\"\n"
+            "    text: \"Gunicorn runs as WSGI.\"\n"
+            "    evidence_segment_ids:\n"
+            "      - \"seg_123\"\n"
+            "synthesis_validation:\n"
+            "  proposition_coverage: 1.0\n"
+            "  hallucination_rate: 0.0\n"
+            "  completeness_score: 9\n"
+            "---\n"
+            "Gunicorn works well.\n"
+            "```"
+        )
+        with self.assertRaises(ValueError) as context:
+            verify_page_shape(content)
+        self.assertIn("wrapped in outer markdown code fences", str(context.exception))
+
+    def test_propositions_without_evidence_fails(self):
+        content = (
+            "---\n"
+            "id: \"page_001\"\n"
+            "title: \"WSGI Server Setup\"\n"
+            "sources:\n"
+            "  - \"notion://page/123\"\n"
+            "propositions:\n"
+            "  - \"Gunicorn runs as a WSGI server.\"\n"
+            "synthesis_validation:\n"
+            "  proposition_coverage: 1.0\n"
+            "  hallucination_rate: 0.0\n"
+            "  completeness_score: 9\n"
+            "---\n"
+            "## Content section\n"
+            "Gunicorn is the recommended WSGI server."
+        )
+        with self.assertRaises(ValueError) as context:
+            verify_page_shape(content)
+        self.assertIn("must be a dictionary with evidence_segment_ids", str(context.exception))
