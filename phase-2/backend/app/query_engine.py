@@ -20,7 +20,8 @@ def _load_page(pages_dir: str, page_id: str) -> Optional[Tuple[Dict[str, Any], s
         content = f.read()
         
     if content.startswith("---"):
-        end = content.find("---", 3)
+        from app.ingestion.validation import find_frontmatter_end
+        end = find_frontmatter_end(content)
         if end != -1:
             yaml_part = content[3:end].strip()
             body_part = content[end + 3:].strip()

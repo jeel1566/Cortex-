@@ -52,7 +52,8 @@ class HybridQueryEngine:
                 access_level = "team"
                 dept = None
                 if content.startswith("---"):
-                    end = content.find("---", 3)
+                    from app.ingestion.validation import find_frontmatter_end
+                    end = find_frontmatter_end(content)
                     if end != -1:
                         try:
                             import yaml

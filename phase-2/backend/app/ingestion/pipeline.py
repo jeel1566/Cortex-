@@ -201,7 +201,8 @@ def run_ingestion_pipeline(tenant_id: str, raw_messages: List[Dict[str, Any]], b
             f"  validated_at: {datetime.datetime.utcnow().isoformat()}Z\n"
         )
         if page_content.startswith("---"):
-            close = page_content.find("---", 3)
+            from app.ingestion.validation import find_frontmatter_end
+            close = find_frontmatter_end(page_content)
             if close != -1:
                 page_content = page_content[:close] + val_block + page_content[close:]
                 
@@ -256,9 +257,11 @@ def run_ingestion_pipeline(tenant_id: str, raw_messages: List[Dict[str, Any]], b
     for meta in pages_meta:
         page_id = meta["page_id"]
         body = meta["content"]
-        close_idx = body.find("---", 3)
-        if body.startswith("---") and close_idx != -1:
-            body = body[close_idx + 3:].strip()
+        if body.startswith("---"):
+            from app.ingestion.validation import find_frontmatter_end
+            close_idx = find_frontmatter_end(body)
+            if close_idx != -1:
+                body = body[close_idx + 3:].strip()
             
         embedding = encode(body[:4096])
         vector_index.add_page(page_id, embedding)

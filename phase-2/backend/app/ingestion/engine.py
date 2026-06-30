@@ -188,7 +188,8 @@ class CortexNewEngine:
             
             body = draft["content"]
             if body.startswith("---"):
-                close = body.find("---", 3)
+                from app.ingestion.validation import find_frontmatter_end
+                close = find_frontmatter_end(body)
                 if close != -1:
                     body = body[close+3:].strip()
             

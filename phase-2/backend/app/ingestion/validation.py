@@ -75,6 +75,25 @@ def validate_page(sources: List[str], synthesized_page: str, tenant_id: str = No
             "reason": f"Fallback triggered due to verification error: {e}"
         }
 
+def find_frontmatter_end(content: str) -> int:
+    """
+    Finds the closing separator index of the YAML frontmatter robustly.
+    It splits content by line and returns the exact character offset of the
+    first line starting from line 1 that is exactly '---' after stripping.
+    Returns -1 if not found.
+    """
+    if not content.startswith("---"):
+        return -1
+    lines = content.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        return -1
+    current_offset = len(lines[0])
+    for line in lines[1:]:
+        if line.strip() == "---":
+            return current_offset
+        current_offset += len(line)
+    return -1
+
 def verify_page_shape(content: str, allowed_segment_ids: List[str] = None, strict_evidence: bool = True) -> bool:
     """
     Validates that the generated knowledge page strictly conforms to the expected shape:
@@ -110,7 +129,7 @@ def verify_page_shape(content: str, allowed_segment_ids: List[str] = None, stric
     if not content.startswith("---"):
         raise ValueError("Page does not start with YAML frontmatter separator '---'")
 
-    close_idx = content.find("---", 3)
+    close_idx = find_frontmatter_end(content)
     if close_idx == -1:
         raise ValueError("Page lacks a closing YAML frontmatter separator '---'")
 
