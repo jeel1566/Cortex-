@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import { useAuth } from "@clerk/nextjs";
 
 export default function DashboardPage() {
-  const { getToken, isLoaded, isSignedIn } = useAuth();
+  const { getToken, userId, isLoaded, isSignedIn } = useAuth();
   const [loading, setLoading] = useState(true);
   
   // Dashboard states
@@ -152,7 +152,7 @@ export default function DashboardPage() {
     try {
       // Setup payload representing the requesting agent authority & department
       const mockPayload = {
-        tenant_id: "tenant_a",
+        tenant_id: userId || "tenant_a",
         authority_level: authorityLevel,
         department: queryDepartment,
         role: "member",
