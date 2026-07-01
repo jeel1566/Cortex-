@@ -1,4 +1,5 @@
 import os
+import json
 import sqlite3
 import unittest
 from unittest.mock import patch, MagicMock
@@ -48,14 +49,28 @@ class TestNewEngineEndToEnd(unittest.TestCase):
     @patch("app.retrieval.raw_segment_index.encode")
     @patch("app.llm.embedding.encode")
     @patch("app.retrieval.hybrid_query.get_kimi_client")
+    @patch("app.ingestion.compiler.get_kimi_client")
     @patch("app.storage.git_store.init_tenant_repo")
     @patch("app.storage.git_store.get_tenant_repo_dir")
     @patch("app.storage.git_store.commit_page_changes")
-    def test_e2e_local_upload_pipeline_flow(self, mock_commit, mock_get_repo_dir, mock_init_repo, mock_kimi, mock_query_encode, mock_idx_encode, mock_idx_batch):
+    def test_e2e_local_upload_pipeline_flow(self, mock_commit, mock_get_repo_dir, mock_init_repo, mock_compiler_kimi, mock_kimi, mock_query_encode, mock_idx_encode, mock_idx_batch):
         mock_idx_batch.side_effect = self.dummy_encode_batch
         mock_idx_encode.side_effect = self.dummy_encode
         mock_query_encode.side_effect = self.dummy_encode
-        
+
+        # Compiler LLM returns structured JSON
+        _llm_json = json.dumps({
+            "title": "Gunicorn Setup",
+            "summary": "Deploy Gunicorn behind Nginx.",
+            "sections": [{"heading": "Setup", "body": "Deploy Gunicorn behind Nginx reversed proxy.", "evidence_segment_ids": ["srcseg_x"]}],
+            "propositions": [{"text": "Gunicorn runs behind Nginx.", "evidence_segment_ids": ["srcseg_x"], "source_quotes": ["Nginx reversed proxy"], "confidence": 0.9, "sensitivity": "team"}],
+            "suggested_links": [],
+            "knowledge_gaps": [],
+        })
+        mock_compiler_client = MagicMock()
+        mock_compiler_client.chat_completion.return_value = _llm_json
+        mock_compiler_kimi.return_value = mock_compiler_client
+
         mock_client = MagicMock()
         mock_client.chat_completion.return_value = "Mocked LLM Answer based on Gunicorn setup guide."
         mock_kimi.return_value = mock_client

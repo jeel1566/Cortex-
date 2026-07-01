@@ -123,15 +123,32 @@ class CortexNewEngine:
         import json
         from app.ingestion.compiler import DraftCompiler
         from app.ingestion.engine_models import utc_now
-        
+
         compiler = DraftCompiler()
         draft_ids = []
         failures = []
+
         for document in bundle.documents:
             source_segments = [s for s in bundle.segments if s.document_ref == document.source_object_external_id]
-            res = compiler.compile_draft(tenant_id, document, source_segments)
-            
-            status = "DRAFT" if res["validation_passed"] else "REJECTED"
+
+            # Fetch real DB rows for this document so compiler gets actual srcseg_ IDs
+            segment_db_rows = []
+            try:
+                # document_ids are resolved in ingest_bundle; re-query by content_hash
+                hashes = [s.content_hash for s in source_segments if s.content_hash]
+                if hashes:
+                    placeholders = ",".join("?" for _ in hashes)
+                    rows = conn.execute(
+                        f"SELECT id, content_hash FROM source_segments WHERE tenant_id = ? AND content_hash IN ({placeholders})",
+                        [tenant_id] + hashes,
+                    ).fetchall()
+                    segment_db_rows = [dict(r) for r in rows]
+            except Exception:
+                pass  # non-fatal: compiler falls back to synthetic IDs
+
+            res = compiler.compile_draft(tenant_id, document, source_segments, segment_db_rows=segment_db_rows)
+
+            status = res.get("status", "DRAFT" if res["validation_passed"] else "REJECTED")
             draft = create_knowledge_page_draft(
                 conn,
                 tenant_id=tenant_id,
@@ -142,27 +159,37 @@ class CortexNewEngine:
                 errors=res["errors"],
             )
             draft_ids.append(draft["id"])
-            
+
             if res["validation_passed"]:
                 for p in res["propositions"]:
+                    # Store source_quotes and confidence in metadata_json to avoid schema migration
+                    metadata = json.dumps({
+                        "source_quotes": p.get("source_quotes", []),
+                        "confidence": p.get("confidence", 0.85),
+                    })
                     conn.execute(
                         """
-                        INSERT INTO propositions (id, tenant_id, draft_id, text, evidence_segment_ids_json, sensitivity, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO propositions (
+                            id, tenant_id, draft_id, text, evidence_segment_ids_json,
+                            sensitivity, created_at, metadata_json
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
-                            f"prop_{uuid.uuid4().hex[:8]}",
+                            p.get("id") or f"prop_{uuid.uuid4().hex[:8]}",
                             tenant_id,
                             draft["id"],
                             p["text"],
-                            json.dumps(p["evidence_segment_ids"]),
+                            json.dumps(p.get("evidence_segment_ids", [])),
                             p.get("sensitivity", "team"),
-                            utc_now()
-                        )
+                            utc_now(),
+                            metadata,
+                        ),
                     )
                 conn.commit()
             else:
                 failures.extend(res["errors"])
+
         return DraftCompileResult(ok=not failures, draft_ids=draft_ids, failures=failures)
 
     def approve_draft(self, tenant_id: str, draft_id: str, approver: str) -> ApprovalResult:
@@ -172,6 +199,9 @@ class CortexNewEngine:
         draft = get_draft(conn, tenant_id, draft_id)
         if not draft:
             return ApprovalResult(ok=False, draft_id=draft_id, failures=["draft not found"])
+
+        if draft.get("status") == "REJECTED":
+            return ApprovalResult(ok=False, draft_id=draft_id, failures=["draft has status REJECTED and cannot be approved"])
 
         try:
             verify_page_shape(draft["content"])

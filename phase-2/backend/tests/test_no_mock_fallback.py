@@ -170,11 +170,14 @@ class TestFallbackDemoTextNeverCommittedToGit(unittest.TestCase):
                             mock_commit.assert_not_called()
 
     def test_engine_does_not_approve_draft_with_empty_body(self):
-        """Compiler must set status=REJECTED for documents with trivially empty bodies."""
+        """Compiler must set status=REJECTED for documents with trivially empty bodies.
+        With the LLM compiler, LLM failure produces REJECTED drafts with no fabricated content."""
+        import json
+        from unittest.mock import MagicMock, patch
         from app.ingestion.compiler import DraftCompiler
         from app.ingestion.engine_models import NormalizedSourceDocument, NormalizedSourceSegment
+
         compiler = DraftCompiler()
-        # A segment with real text
         doc = NormalizedSourceDocument(
             source_object_external_id="notion://page/p1",
             title="Test",
@@ -187,9 +190,26 @@ class TestFallbackDemoTextNeverCommittedToGit(unittest.TestCase):
             position=0,
             text="Real content here.",
         )
-        result = compiler.compile_draft("tenant_test", doc, [seg])
-        self.assertIn("Real content", result["content"])
+
+        llm_json = json.dumps({
+            "title": "Test", "summary": "Real content here.",
+            "sections": [{"heading": "Content", "body": "Real content here.", "evidence_segment_ids": ["srcseg_x"]}],
+            "propositions": [{"text": "Real content here.", "evidence_segment_ids": ["srcseg_x"], "source_quotes": ["Real content here"], "confidence": 0.9, "sensitivity": "team"}],
+            "suggested_links": [], "knowledge_gaps": [],
+        })
+        with patch("app.ingestion.compiler.get_kimi_client") as mock_kimi:
+            mock_c = MagicMock()
+            mock_c.chat_completion.return_value = llm_json
+            mock_kimi.return_value = mock_c
+            result = compiler.compile_draft("tenant_test", doc, [seg], segment_db_rows=[{"id": "srcseg_x", "content_hash": seg.content_hash}])
+
+        # LLM compiled content must not contain fallback/demo text
         self.assertNotIn("fallback", result["content"].lower())
+        # Must contain actual source-backed content
+        self.assertIn("Real content", result["content"])
+        # Draft must be compilable (validation_passed) since LLM succeeded
+        self.assertTrue(result["validation_passed"])
+
 
 
 # ---------------------------------------------------------------------------

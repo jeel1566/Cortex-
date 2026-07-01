@@ -1,8 +1,10 @@
+import json
 import os
 import sqlite3
 import sys
 import unittest
 import unittest.mock
+from unittest.mock import MagicMock, patch
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -72,7 +74,19 @@ class TestCortexNewEngine(unittest.TestCase):
             ],
         )
 
-    def test_engine_ingest_does_not_commit_to_git(self):
+    _LLM_JSON = json.dumps({
+        "title": "Handbook", "summary": "Remote work policy.",
+        "sections": [{"heading": "Handbook", "body": "Remote work is allowed.", "evidence_segment_ids": ["srcseg_x"]}],
+        "propositions": [{"text": "Remote work is allowed.", "evidence_segment_ids": ["srcseg_x"], "source_quotes": ["Remote work is allowed"], "confidence": 0.9, "sensitivity": "team"}],
+        "suggested_links": [], "knowledge_gaps": [],
+    })
+
+    @patch("app.ingestion.compiler.get_kimi_client")
+    def test_engine_ingest_does_not_commit_to_git(self, mock_kimi):
+        mock_c = MagicMock()
+        mock_c.chat_completion.return_value = self._LLM_JSON
+        mock_kimi.return_value = mock_c
+
         result = CortexNewEngine(conn=self.conn).ingest_bundle("tenant_engine_test", self.bundle())
 
         self.assertTrue(result.ok)
@@ -84,7 +98,18 @@ class TestCortexNewEngine(unittest.TestCase):
             1,
         )
 
-    def test_engine_returns_counts_for_documents_segments_and_drafts(self):
+        prop = self.conn.execute("SELECT metadata_json FROM propositions LIMIT 1").fetchone()
+        self.assertIsNotNone(prop)
+        metadata = json.loads(prop["metadata_json"])
+        self.assertEqual(metadata["source_quotes"], ["Remote work is allowed"])
+        self.assertEqual(metadata["confidence"], 0.9)
+
+    @patch("app.ingestion.compiler.get_kimi_client")
+    def test_engine_returns_counts_for_documents_segments_and_drafts(self, mock_kimi):
+        mock_c = MagicMock()
+        mock_c.chat_completion.return_value = self._LLM_JSON
+        mock_kimi.return_value = mock_c
+
         result = CortexNewEngine(conn=self.conn).ingest_bundle("tenant_engine_test", self.bundle())
 
         self.assertEqual(result.counts, {
@@ -96,20 +121,22 @@ class TestCortexNewEngine(unittest.TestCase):
             "skipped_empty": 0,
         })
 
+    @unittest.mock.patch("app.ingestion.compiler.get_kimi_client")
     @unittest.mock.patch("app.storage.git_store.init_tenant_repo")
     @unittest.mock.patch("app.storage.git_store.get_tenant_repo_dir")
     @unittest.mock.patch("app.storage.git_store.commit_page_changes")
     @unittest.mock.patch("builtins.open", new_callable=unittest.mock.mock_open)
-    def test_approve_valid_draft_commits_to_git(self, mock_file_open, mock_commit, mock_get_repo_dir, mock_init_repo):
+    def test_approve_valid_draft_commits_to_git(self, mock_file_open, mock_commit, mock_get_repo_dir, mock_init_repo, mock_kimi):
         mock_get_repo_dir.return_value = "/tmp/repo"
         mock_commit.return_value = "dummy_sha"
+        mock_c = MagicMock()
+        mock_c.chat_completion.return_value = self._LLM_JSON
+        mock_kimi.return_value = mock_c
 
         engine = CortexNewEngine(conn=self.conn)
         ingest_res = engine.ingest_bundle("tenant_engine_test", self.bundle())
         self.assertTrue(ingest_res.ok)
 
-        draft_id = ingest_res.stage_results[3].counts.get("drafts") or "draft_4236a282f190"
-        # We can fetch the draft ID from database
         draft_row = self.conn.execute("SELECT id FROM knowledge_page_drafts WHERE status = 'DRAFT'").fetchone()
         self.assertIsNotNone(draft_row)
         draft_id = draft_row["id"]

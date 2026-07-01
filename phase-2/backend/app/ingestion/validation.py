@@ -118,7 +118,9 @@ def verify_page_shape(content: str, allowed_segment_ids: List[str] = None, stric
         "expected output",
         "input json",
         "</output_format>",
-        "based on the provided"
+        "based on the provided",
+        "assistant commentary",
+        "assistant response",
     ]
     content_lower = content.lower()
     for word in blacklist:
@@ -180,6 +182,77 @@ def verify_page_shape(content: str, allowed_segment_ids: List[str] = None, stric
                             raise ValueError(f"Proposition evidence ID '{ev_id}' does not exist in source segments.")
 
     return True
+
+
+def validate_compiled_draft(
+    content: str,
+    propositions: list,
+    allowed_segment_ids: List[str] = None,
+    approved_page_ids: List[str] = None,
+) -> Dict[str, Any]:
+    """
+    Extended validation for LLM-compiled drafts.
+    Returns {validation_passed, errors, warnings, validated_at}.
+    Checks verify_page_shape PLUS:
+    - confidence in [0.0, 1.0]
+    - sensitivity must be one of public|team|confidential|restricted
+    - source_quotes non-empty (warning if missing, not error)
+    - suggested link targets must be in approved_page_ids if provided
+    """
+    from app.ingestion.engine_models import utc_now
+    errors: List[str] = []
+    warnings: List[str] = []
+    valid_sensitivities = {"public", "team", "confidential", "restricted"}
+
+    try:
+        verify_page_shape(content, allowed_segment_ids=allowed_segment_ids, strict_evidence=bool(propositions))
+    except ValueError as exc:
+        errors.append(str(exc))
+
+    for idx, p in enumerate(propositions):
+        text = p.get("text", "").strip()
+        if not text:
+            errors.append(f"Proposition {idx}: empty text")
+        ev_ids = p.get("evidence_segment_ids", [])
+        if not ev_ids:
+            errors.append(f"Proposition {idx}: missing evidence_segment_ids")
+        conf = p.get("confidence")
+        if conf is not None:
+            try:
+                c = float(conf)
+                if not (0.0 <= c <= 1.0):
+                    errors.append(f"Proposition {idx}: confidence {c} outside [0.0, 1.0]")
+            except (TypeError, ValueError):
+                errors.append(f"Proposition {idx}: confidence must be numeric")
+        sens = p.get("sensitivity", "team")
+        if sens not in valid_sensitivities:
+            errors.append(f"Proposition {idx}: invalid sensitivity '{sens}'")
+        quotes = p.get("source_quotes", [])
+        if not quotes:
+            warnings.append(f"Proposition {idx}: no source_quotes provided")
+
+    if approved_page_ids is not None:
+        approved_set = set(approved_page_ids)
+        # parse suggested_links from content frontmatter
+        try:
+            import yaml
+            fm_end = find_frontmatter_end(content)
+            if fm_end != -1:
+                meta = yaml.safe_load(content[3:fm_end].strip()) or {}
+                for link_type in ("primary_links", "related_links", "conflict_links", "duplicate_links"):
+                    for pid in (meta.get(link_type) or []):
+                        if pid and pid not in approved_set:
+                            errors.append(f"Link target '{pid}' in {link_type} does not exist in approved pages")
+        except Exception:
+            pass
+
+    passed = not errors
+    return {
+        "validation_passed": passed,
+        "errors": errors,
+        "warnings": warnings,
+        "validated_at": utc_now(),
+    }
 
 
 def _parse_frontmatter_keys(yaml_text: str) -> Dict[str, Any]:

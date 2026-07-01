@@ -244,5 +244,13 @@ def init_database(conn: sqlite3.Connection):
         except Exception as e:
             print(f"Migration error (failure_reason): {e}")
             
-    conn.commit()
+    # Add metadata_json to propositions (stores source_quotes, confidence without schema change)
+    try:
+        cursor.execute("SELECT metadata_json FROM propositions LIMIT 1")
+    except sqlite3.OperationalError:
+        try:
+            cursor.execute("ALTER TABLE propositions ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'")
+        except Exception as e:
+            print(f"Migration error (propositions.metadata_json): {e}")
 
+    conn.commit()
